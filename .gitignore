@@ -1,0 +1,11 @@
+*.o
+*.depend
+*.Tdepend
+*.elf
+*.rpx
+*.config
+*.creator
+*.creator.user
+*.files
+*.includes
+
