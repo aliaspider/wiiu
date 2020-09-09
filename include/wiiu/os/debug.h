@@ -3,12 +3,15 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#ifdef __wiiu__
 #include <wiiu/types.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#ifdef __wiiu__
 void OSConsoleWrite(const char *msg, int size);
 void OSReport(const char *fmt, ...);
 void OSPanic(const char *file, int line, const char *fmt, ...);
@@ -27,6 +30,7 @@ void* OSGetSymbolNameEx(u32 addr, char* out, int out_size);
 void DisassemblePPCRange(const void *start, const void *end, PrintfFunc printf_cb, GetSymbolNameFunc getSymbolName_cb, int flags);
 BOOL DisassemblePPCOpcode(const void *opcode, char *out, int out_size, GetSymbolNameFunc getSymbolName_cb, int flags);
 void OSSetDABR(BOOL allCores, void* addr, BOOL reads, BOOL writes);
+#endif
 
 #ifdef __cplusplus
 }

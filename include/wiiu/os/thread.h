@@ -6,7 +6,8 @@
 extern "C" {
 #endif
 
-#define OS_THREAD_DEF_PRIO 16
+#define OS_THREAD_DEF_PRIO     0x10
+#define OS_THREAD_SPECIFIC_MAX 0x10
 
 typedef struct OSThread OSThread;
 
@@ -196,7 +197,7 @@ typedef struct OSThread
    uint32_t unknown1[0x77];
 
    /*! Thread specific values, accessed with OSSetThreadSpecific and OSGetThreadSpecific. */
-   uint32_t specific[0x10];
+   void* specific[OS_THREAD_SPECIFIC_MAX];
 
    uint32_t unknown2;
 
@@ -250,7 +251,7 @@ uint32_t OSGetStackPointer();
 uint32_t OSGetThreadAffinity(OSThread *thread);
 const char *OSGetThreadName(OSThread *thread);
 int32_t OSGetThreadPriority(OSThread *thread);
-uint32_t OSGetThreadSpecific(uint32_t id);
+void* OSGetThreadSpecific(uint32_t id);
 BOOL OSIsThreadSuspended(OSThread *thread);
 BOOL OSIsThreadTerminated(OSThread *thread);
 BOOL OSJoinThread(OSThread *thread, int *threadResult);
@@ -264,7 +265,7 @@ OSThreadDeallocatorFn OSSetThreadDeallocator(OSThread *thread, OSThreadDeallocat
 void OSSetThreadName(OSThread *thread, const char *name);
 BOOL OSSetThreadPriority(OSThread *thread, int32_t priority);
 BOOL OSSetThreadRunQuantum(OSThread *thread, uint32_t quantum);
-void OSSetThreadSpecific(uint32_t id, uint32_t value);
+void OSSetThreadSpecific(uint32_t id, const void* value);
 BOOL OSSetThreadStackUsage(OSThread *thread);
 void OSSleepThread(OSThreadQueue *queue);
 void OSSleepTicks(OSTime ticks);
