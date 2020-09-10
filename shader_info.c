@@ -1,6 +1,6 @@
 
 #include <stdio.h>
-#include <wiiu/gx2/shader_info.h>
+#include <wiiu/gx2/shader_disasm.h>
 
 int GX2VertexShaderInfo(GX2VertexShader *vs, char *buffer) {
    char *ptr = buffer;

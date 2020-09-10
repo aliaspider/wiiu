@@ -119,6 +119,8 @@ enum Channel : u32 {
    a = w,
    _0_ = 4,
    _1_ = 5,
+   zero = _0_,
+   one = _1_,
 };
 enum AluSrc : u32 {
    ALU_SRC_1_DBL_L = 0xF4,
@@ -384,7 +386,7 @@ public:
       _assert_(alu_literals.size() < 5);
       return SrcReg(ALU_SRC_LITERAL, (Channel)(alu_literals.size() - 1));
    }
-   SrcReg PV() { return SrcReg(ALU_SRC_PV, x); }
+//   SrcReg PV() { return SrcReg(ALU_SRC_PV, x); }
 
    std::vector<u64> cf_;
    std::vector<u64> alu_;
@@ -579,7 +581,7 @@ protected:
 
 class GX2VertexShaderEmitter : public GX2Emitter {
 public:
-   GX2VertexShaderEmitter(GX2VertexShader *vs = nullptr) : vs_(vs) {
+   GX2VertexShaderEmitter() {
       num_gprs = 1;
       CALL_FS(NO_BARRIER);
    }
@@ -596,89 +598,91 @@ public:
       param_exports.push_back(param);
    }
    Reg allocReg(VSInput semantic = (VSInput)INVALID_SEMANTIC) { return GX2Emitter::allocReg((u32)semantic); }
-   void END_OF_PROGRAM() {
+   void END_OF_PROGRAM(GX2VertexShader *vs) {
       GX2Emitter::END_OF_PROGRAM();
-      if (!vs_)
-         return;
 
       /* code */
-      vs_->size = program.size() * sizeof(*program.data());
-      vs_->program = (u8 *)MEM2_alloc(vs_->size, GX2_SHADER_ALIGNMENT);
-      memcpy(vs_->program, program.data(), vs_->size);
-      GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, vs_->program, vs_->size);
+      vs->size = program.size() * sizeof(*program.data());
+      if (vs->program && !(vs->gx2rBuffer.flags & GX2R_RESOURCE_LOCKED_READ_ONLY))
+         MEM2_free(vs->program);
+      vs->program = (u8 *)MEM2_alloc(vs->size, GX2_SHADER_ALIGNMENT);
+      vs->gx2rBuffer.flags = (GX2RResourceFlags)(vs->gx2rBuffer.flags & ~GX2R_RESOURCE_LOCKED_READ_ONLY);
+      memcpy(vs->program, program.data(), vs->size);
+      GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, vs->program, vs->size);
 
       /* regs */
-      vs_->regs.sq_pgm_resources_vs.num_gprs = num_gprs;
-      vs_->regs.sq_pgm_resources_vs.stack_size = 1;
-      vs_->regs.spi_vs_out_config.vs_export_count = param_exports.size() >> 1; /* ? */
-      vs_->regs.num_spi_vs_out_id = (param_exports.size() + 3) >> 2;
-      memset(vs_->regs.spi_vs_out_id, 0xFF, sizeof(vs_->regs.spi_vs_out_id));
+      vs->regs.sq_pgm_resources_vs.num_gprs = num_gprs;
+      vs->regs.sq_pgm_resources_vs.stack_size = 1;
+      vs->regs.spi_vs_out_config.vs_export_count = param_exports.size() >> 1; /* ? */
+      vs->regs.num_spi_vs_out_id = (param_exports.size() + 3) >> 2;
+      memset(vs->regs.spi_vs_out_id, 0xFF, sizeof(vs->regs.spi_vs_out_id));
       for (int i = 0; i < param_exports.size(); i++) {
          switch (i & 0x3) {
-         case 0: vs_->regs.spi_vs_out_id[i >> 2].semantic_0 = (u8)param_exports[i]; break;
-         case 1: vs_->regs.spi_vs_out_id[i >> 2].semantic_1 = (u8)param_exports[i]; break;
-         case 2: vs_->regs.spi_vs_out_id[i >> 2].semantic_2 = (u8)param_exports[i]; break;
-         case 3: vs_->regs.spi_vs_out_id[i >> 2].semantic_3 = (u8)param_exports[i]; break;
+         case 0: vs->regs.spi_vs_out_id[i >> 2].semantic_0 = (u8)param_exports[i]; break;
+         case 1: vs->regs.spi_vs_out_id[i >> 2].semantic_1 = (u8)param_exports[i]; break;
+         case 2: vs->regs.spi_vs_out_id[i >> 2].semantic_2 = (u8)param_exports[i]; break;
+         case 3: vs->regs.spi_vs_out_id[i >> 2].semantic_3 = (u8)param_exports[i]; break;
          }
       }
-      vs_->regs.sq_vtx_semantic_clear = ~0u;
-      vs_->regs.num_sq_vtx_semantic = semantics_.size();
+      vs->regs.sq_vtx_semantic_clear = ~0u;
+      vs->regs.num_sq_vtx_semantic = semantics_.size();
 
-      for (int i = 0; i < countof(vs_->regs.sq_vtx_semantic); i++)
-         vs_->regs.sq_vtx_semantic[i] = 0xFF;
+      for (int i = 0; i < countof(vs->regs.sq_vtx_semantic); i++)
+         vs->regs.sq_vtx_semantic[i] = 0xFF;
       for (Semantic s : semantics_) {
-         vs_->regs.sq_vtx_semantic[s.reg - 1] = s.value;
-         vs_->regs.sq_vtx_semantic_clear &= ~(1 << (s.reg - 1));
+         vs->regs.sq_vtx_semantic[s.reg - 1] = s.value;
+         vs->regs.sq_vtx_semantic_clear &= ~(1 << (s.reg - 1));
       }
 
-      vs_->regs.vgt_vertex_reuse_block_cntl.vtx_reuse_depth = 0xE;
-      vs_->regs.vgt_hos_reuse_depth.reuse_depth = 0x10;
+      vs->regs.vgt_vertex_reuse_block_cntl.vtx_reuse_depth = 0xE;
+      vs->regs.vgt_hos_reuse_depth.reuse_depth = 0x10;
    }
-   std::vector<PSInput> param_exports;
-   u32 pos_exports = 0;
 
 private:
-   GX2VertexShader *vs_;
+   std::vector<PSInput> param_exports;
+   u32 pos_exports = 0;
 };
 class GX2PixelShaderEmitter : public GX2Emitter {
 public:
-   GX2PixelShaderEmitter(GX2PixelShader *ps = nullptr) : ps_(ps) {}
+   GX2PixelShaderEmitter() {}
    Reg allocReg(PSInput semantic = (PSInput)INVALID_SEMANTIC) { return GX2Emitter::allocReg((u32)semantic); }
    void EXP_DONE_PIX(Reg srcReg, Barrier barrier = BARRIER) {
       EXP_DONE((ExportType)(PIX0 + exports++), srcReg, barrier);
    }
    void EXP_PIX(Reg srcReg, Barrier barrier = BARRIER) { EXP((ExportType)(PIX0 + exports++), srcReg, barrier); }
 
-   void END_OF_PROGRAM() {
+   void END_OF_PROGRAM(GX2PixelShader *ps) {
       GX2Emitter::END_OF_PROGRAM();
-      if (!ps_)
-         return;
 
       /* code */
-      ps_->size = program.size() * sizeof(*program.data());
-      ps_->program = (u8 *)MEM2_alloc(ps_->size, GX2_SHADER_ALIGNMENT);
-      memcpy(ps_->program, program.data(), ps_->size);
-      GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, ps_->program, ps_->size);
+      ps->size = program.size() * sizeof(*program.data());
+      if (ps->program && !(ps->gx2rBuffer.flags & GX2R_RESOURCE_LOCKED_READ_ONLY))
+         MEM2_free(ps->program);
+
+      ps->program = (u8 *)MEM2_alloc(ps->size, GX2_SHADER_ALIGNMENT);
+      ps->gx2rBuffer.flags = (GX2RResourceFlags)(ps->gx2rBuffer.flags & ~GX2R_RESOURCE_LOCKED_READ_ONLY);
+      memcpy(ps->program, program.data(), ps->size);
+      GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, ps->program, ps->size);
 
       /* regs */
-      ps_->regs.sq_pgm_resources_ps.num_gprs = num_gprs;
-      ps_->regs.sq_pgm_resources_ps.stack_size = 0;
-      ps_->regs.sq_pgm_exports_ps.export_mode = 0x2;
-      ps_->regs.spi_ps_in_control_0.num_interp = semantics_.size();
-      ps_->regs.spi_ps_in_control_0.persp_gradient_ena = TRUE;
-      ps_->regs.spi_ps_in_control_0.baryc_sample_cntl = spi_baryc_cntl_centers_only;
-      ps_->regs.num_spi_ps_input_cntl = semantics_.size();
+      ps->regs.sq_pgm_resources_ps.num_gprs = num_gprs;
+      ps->regs.sq_pgm_resources_ps.stack_size = 0;
+      ps->regs.sq_pgm_exports_ps.export_mode = 0x2;
+      ps->regs.spi_ps_in_control_0.num_interp = semantics_.size();
+      ps->regs.spi_ps_in_control_0.persp_gradient_ena = TRUE;
+      ps->regs.spi_ps_in_control_0.baryc_sample_cntl = spi_baryc_cntl_centers_only;
+      ps->regs.num_spi_ps_input_cntl = semantics_.size();
       for (Semantic s : semantics_) {
-         ps_->regs.spi_ps_input_cntls[s.reg].semantic = s.value;
-         ps_->regs.spi_ps_input_cntls[s.reg].default_val = 1;
+         ps->regs.spi_ps_input_cntls[s.reg].semantic = s.value;
+         ps->regs.spi_ps_input_cntls[s.reg].default_val = 1;
       }
-      ps_->regs.cb_shader_mask.output0_enable = 0xF;
-      ps_->regs.cb_shader_control.rt0_enable = TRUE;
-      ps_->regs.db_shader_control.z_order = db_z_order_early_z_then_late_z;
+      ps->regs.cb_shader_mask.output0_enable = 0xF;
+      ps->regs.cb_shader_control.rt0_enable = TRUE;
+      ps->regs.db_shader_control.z_order = db_z_order_early_z_then_late_z;
+
    }
 
 private:
-   GX2PixelShader *ps_;
    u32 exports = 0;
 };
 
