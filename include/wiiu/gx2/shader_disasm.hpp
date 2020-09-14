@@ -3,4 +3,4 @@
 #include "shaders.h"
 
 
-void DisassembleGX2Shader(void *data, u32 size, char *buffer);
+void DisassembleGX2Shader(const void *data, u32 size, char *buffer);

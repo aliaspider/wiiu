@@ -1,6 +1,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <wiiu/gx2/shader_disasm.hpp>
 #include <wiiu/gx2/shader_inst.hpp>
@@ -136,7 +137,6 @@ void GX2ShaderDisassembler::TEX(CF_WORD0 w0, CF_WORD1 w1) {
 		TEX_WORD2 tex2 = *(TEX_WORD2 *)slotPtr_++;
 		slotPtr_++;
 
-		Endl();
 		Emit("%2i", groupIndex_++);
 		Emit("  ");
 		Emit("%-15s", GetInstName(tex0.inst));
@@ -218,7 +218,7 @@ void GX2ShaderDisassembler::ALU_SRC(u32 sel, u32 chan, bool neg) {
 		else if (sel < 0x100)
 			Emit("UNKNOWN[%i]", sel - 0xC0);
 		else
-			Emit("%sC[%i]", sel - 0x100);
+			Emit("C[%i]", sel - 0x100);
 	}
 
 	EmitSuffix(".%c", channels[chan]);
@@ -263,8 +263,6 @@ void GX2ShaderDisassembler::ALU_OP2(ALU_WORD0 w0, ALU_WORD1_OP2 w1) {
 		Emit("UPDATE_PRED");
 }
 void GX2ShaderDisassembler::ALU_OP3(ALU_WORD0 w0, ALU_WORD1_OP3 w1) {
-	const char *name = "";
-
 	Emit("%-15s", GetInstName(w1.inst));
 	Emit("R%i.%c,", w1.dstGPR, channels[w1.dstElem]);
 
@@ -384,25 +382,38 @@ bool GX2ShaderDisassembler::CF() {
 			break;
 		}
 	}
+	if (!w1.instIsAlu && w1.endOfProgram) {
+		Emit("END_OF_PROGRAM");
+		Endl();
+	}
+
 	return !w1.instIsAlu && w1.endOfProgram;
 }
 
 void GX2ShaderDisassembler::disassemble(const void *data, u32 size, char *buffer) {
+#ifdef __BIG_ENDIAN__
+	u32 *copy = (u32 *)malloc(size);
+	for (int i = 0; i < size >> 2; i++)
+		copy[i] = __builtin_bswap32(((const u32 *)data)[i]);
+	index_ = (const u64 *)copy;
+#else
 	index_ = (const u64 *)data;
-	src_ = (const u32 *)data;
+#endif
+	src_ = (const u32 *)index_;
 	slotPtr_ = nullptr;
 	setOutputBuffer(buffer);
 	indent_ = 0;
 
 	cf_cnt_ = 0;
 	groupIndex_ = 0;
-	while (!CF())
+	while (!CF() && ((u8 *)src_ - (u8 *)index_) < size)
 		;
-	Emit("END_OF_PROGRAM");
-	Endl();
+#ifdef __BIG_ENDIAN__
+	free(copy);
+#endif
 }
 
-void DisassembleGX2Shader(void *data, u32 size, char *buffer) {
+void DisassembleGX2Shader(const void *data, u32 size, char *buffer) {
 	GX2ShaderDisassembler disasm;
 	disasm.disassemble(data, size, buffer);
 }

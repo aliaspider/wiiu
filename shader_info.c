@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <wiiu/gx2/shader_info.h>
 
-int GX2VertexShaderInfo(GX2VertexShader *vs, char *buffer) {
+int GX2VertexShaderInfo(const GX2VertexShader *vs, char *buffer) {
    char *ptr = buffer;
    ptr += sprintf(ptr, "num gprs: %i\n", vs->regs.sq_pgm_resources_vs.num_gprs);
    ptr += sprintf(ptr, "stack size: %i\n", vs->regs.sq_pgm_resources_vs.stack_size);
@@ -36,7 +36,7 @@ int GX2VertexShaderInfo(GX2VertexShader *vs, char *buffer) {
    return ptr - buffer;
 }
 
-int GX2PixelShaderInfo(GX2PixelShader *ps, char *buffer) {
+int GX2PixelShaderInfo(const GX2PixelShader *ps, char *buffer) {
    char *ptr = buffer;
    ptr += sprintf(ptr, "num gprs: %i\n", ps->regs.sq_pgm_resources_ps.num_gprs);
    ptr += sprintf(ptr, "stack size: %i\n", ps->regs.sq_pgm_resources_ps.stack_size);

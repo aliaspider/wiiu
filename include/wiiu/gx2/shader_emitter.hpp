@@ -134,6 +134,8 @@ public:
 		ALU_SRC_KCACHE_SIZE = 0x20,
 		ALU_SRC_KCACHE0_BASE = 0x80,
 		ALU_SRC_KCACHE1_BASE = ALU_SRC_KCACHE0_BASE + ALU_SRC_KCACHE_SIZE,
+		BARRIER = true,
+		NO_BARRIER = false,
 	};
 
 protected:
@@ -169,7 +171,7 @@ public:
 		return Reg(offset - (kCache[i].addr << 4) + ALU_SRC_KCACHE0_BASE + i * ALU_SRC_KCACHE_SIZE);
 	}
 	~GX2Emitter() {}
-	void CALL_FS(bool barrier = false) { emitCF(CF_DWORD0(0), CF_DWORD1(CF_INST::CALL_FS, barrier)); }
+	void CALL_FS(bool barrier = BARRIER) { emitCF(CF_DWORD0(0), CF_DWORD1(CF_INST::CALL_FS, barrier)); }
 
 	void END_OF_PROGRAM() {
 		program.clear();
@@ -198,11 +200,11 @@ public:
 			program.push_back(0);
 	}
 
-	u64 ALU(u32 addr, u32 count, KCACHE kCache0, KCACHE kCache1, u32 altConst = 0, bool barrier = true) {
+	u64 ALU(u32 addr, u32 count, KCACHE kCache0, KCACHE kCache1, u32 altConst = 0, bool barrier = BARRIER) {
 		return QWORD(CF_ALU_WORD0(addr, kCache0.binding, kCache1.binding, kCache0.mode),
 						 CF_ALU_WORD1(kCache1.mode, kCache0.addr, kCache1.addr, count, altConst, CF_INST_ALU::ALU, barrier));
 	}
-	u64 TEX(u32 addr, u32 count, bool barrier = true) {
+	u64 TEX(u32 addr, u32 count, bool barrier = BARRIER) {
 		_assert_(count > 0);
 		return QWORD(CF_DWORD0(addr), CF_DWORD1(CF_INST::TEX, barrier, count - 1, VALID_PIX));
 	}
@@ -300,12 +302,12 @@ public:
 	std::vector<u64> program;
 	std::vector<u32> regs;
 
-	void EXP_DONE(ExportType dstReg_and_type, Reg srcReg, bool barrier = true) {
+	void EXP_DONE(ExportType dstReg_and_type, Reg srcReg, bool barrier = BARRIER) {
 		emitCF(CF_EXP_WORD0(dstReg_and_type, srcReg.id, 0x0, 0x0, 0x0),
 				 CF_EXP_WORD1(srcReg.x, srcReg.y, srcReg.z, srcReg.w, 0x0, CF_INST_EXP::EXP_DONE, barrier));
 	}
 
-	void EXP(ExportType dstReg_and_type, Reg srcReg, bool barrier = true) {
+	void EXP(ExportType dstReg_and_type, Reg srcReg, bool barrier = BARRIER) {
 		emitCF(CF_EXP_WORD0(dstReg_and_type, srcReg.id, 0x0, 0x0, 0x0),
 				 CF_EXP_WORD1(srcReg.x, srcReg.y, srcReg.z, srcReg.w, 0x0, CF_INST_EXP::EXP, barrier));
 	}
@@ -491,13 +493,13 @@ public:
 		num_gprs = 1;
 		CALL_FS(false);
 	}
-	void EXP_DONE_POS(Reg srcReg, bool barrier = true) { EXP_DONE((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
-	void EXP_POS(Reg srcReg, bool barrier = true) { EXP((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
-	void EXP_DONE_PARAM(PSInput param, Reg srcReg, bool barrier = true) {
+	void EXP_DONE_POS(Reg srcReg, bool barrier = BARRIER) { EXP_DONE((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
+	void EXP_POS(Reg srcReg, bool barrier = BARRIER) { EXP((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
+	void EXP_DONE_PARAM(PSInput param, Reg srcReg, bool barrier = BARRIER) {
 		EXP_DONE((ExportType)(PARAM0 + param_exports.size()), srcReg, barrier);
 		param_exports.push_back(param);
 	}
-	void EXP_PARAM(PSInput param, Reg srcReg, bool barrier = true) {
+	void EXP_PARAM(PSInput param, Reg srcReg, bool barrier = BARRIER) {
 		EXP((ExportType)(PARAM0 + param_exports.size()), srcReg, barrier);
 		param_exports.push_back(param);
 	}
@@ -550,8 +552,8 @@ class GX2PixelShaderEmitter : public GX2Emitter {
 public:
 	GX2PixelShaderEmitter() {}
 	Reg allocReg(PSInput semantic = (PSInput)INVALID_SEMANTIC) { return GX2Emitter::allocReg((u32)semantic); }
-	void EXP_DONE_PIX(Reg srcReg, bool barrier = true) { EXP_DONE((ExportType)(PIX0 + exports++), srcReg, barrier); }
-	void EXP_PIX(Reg srcReg, bool barrier = true) { EXP((ExportType)(PIX0 + exports++), srcReg, barrier); }
+	void EXP_DONE_PIX(Reg srcReg, bool barrier = BARRIER) { EXP_DONE((ExportType)(PIX0 + exports++), srcReg, barrier); }
+	void EXP_PIX(Reg srcReg, bool barrier = BARRIER) { EXP((ExportType)(PIX0 + exports++), srcReg, barrier); }
 
 	void END_OF_PROGRAM(GX2PixelShader *ps) {
 		GX2Emitter::END_OF_PROGRAM();
