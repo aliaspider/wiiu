@@ -123,7 +123,6 @@ struct Reg {
 class Constant;
 class GX2Emitter;
 
-
 static const Reg PV(ALU_SRC_PV);
 static const SrcChannel PS(ALU_SRC_PS, x);
 static const Reg ___(0, false);
@@ -134,34 +133,60 @@ static const Reg _temp3(TEMP_GPR3);
 
 class GX2Emitter {
 public:
-	class Constant {
+	class KCacheChannel {
 	public:
-		Constant(UB_Bindings binding, size_t offset, GX2Emitter *emitter) :
-			binding_((int)binding), offset_(offset >> 4), emitter_(emitter) {
-			_assert_(!(offset & 0xF)); // vec4 aligned
+		KCacheChannel(UB_Bindings binding, size_t offset, GX2Emitter *emitter) :
+			binding_(binding), offset_(offset), emitter_(emitter) {
+			_assert_(!(offset & 0x3)); // vec aligned
 		}
-		Reg operator[](int index) { return emitter_->lockKCacheLane((int)binding_, offset_ + index); }
-		SrcChannel operator()(Channel c) { return operator[](0)(c); }
+		operator SrcChannel() { return emitter_->lockKCacheLane(binding_, offset_ >> 4)(Channel((offset_ >> 2) & 0x3)); }
 
 	private:
-		int binding_;
+		UB_Bindings  binding_;
 		size_t offset_;
 		GX2Emitter *emitter_;
 	};
 
-protected:
-	GX2Emitter() {}
+	class KCacheReg {
+	public:
+		KCacheReg(UB_Bindings binding, size_t offset, GX2Emitter *emitter) :
+			binding_(binding), offset_(offset >> 4), emitter_(emitter) {
+			_assert_(!(offset & 0xF)); // vec4 aligned
+		}
+		KCacheChannel operator()(Channel c) {
+			_assert_(c < 4);
+			return KCacheChannel(binding_, offset_ + (c << 2), emitter_);
+		}
 
-public:
+	private:
+		UB_Bindings binding_;
+		size_t offset_;
+		GX2Emitter *emitter_;
+	};
+
+	class KCacheRegs {
+	public:
+		KCacheRegs(UB_Bindings binding, size_t offset, GX2Emitter *emitter) :
+			binding_(binding), offset_(offset), emitter_(emitter) {
+			_assert_(!(offset & 0xF)); // vec4 aligned
+		}
+		KCacheReg operator[](int index) { return KCacheReg(binding_, offset_ + index << 4, emitter_); }
+
+	private:
+		UB_Bindings binding_;
+		size_t offset_;
+		GX2Emitter *emitter_;
+	};
+
 	struct KCACHE {
-		u32 binding;
+		UB_Bindings binding;
 		KCacheMode mode;
 		u32 addr;
 	};
 	KCACHE kCache[2] = {};
-	Reg lockKCacheLane(int binding, size_t offset) {
+	Reg lockKCacheLane(UB_Bindings binding, size_t lane) {
+		size_t addr = lane >> 4;
 		int i;
-		size_t addr = offset >> 4;
 		for (i = 0; i < 2; i++) {
 			if (kCache[i].mode == CF_KCACHE_BANK_LOCK_NONE) {
 				kCache[i].mode = CF_KCACHE_BANK_LOCK_1;
@@ -179,8 +204,10 @@ public:
 			}
 		}
 		_assert_(i < 2);
-		return Reg(offset - (kCache[i].addr << 4) + ALU_SRC_KCACHE0_BASE + i * ALU_SRC_KCACHE_SIZE);
+		return Reg(lane - (kCache[i].addr << 4) + ALU_SRC_KCACHE0_BASE + i * ALU_SRC_KCACHE_SIZE);
 	}
+protected:
+	GX2Emitter() {}
 	~GX2Emitter() {}
 	void CALL_FS(bool barrier = BARRIER) { emitCF(CF_DWORD0(0), CF_DWORD1(CF_INST::CALL_FS, barrier)); }
 
@@ -231,7 +258,7 @@ public:
 	}
 
 	u64 ALU(u32 addr, u32 count, KCACHE kCache0, KCACHE kCache1, u32 altConst = 0, bool barrier = BARRIER) {
-		return QWORD(CF_ALU_WORD0(addr, kCache0.binding, kCache1.binding, kCache0.mode),
+		return QWORD(CF_ALU_WORD0(addr, (u32)kCache0.binding, (u32)kCache1.binding, kCache0.mode),
 						 CF_ALU_WORD1(kCache1.mode, kCache0.addr, kCache1.addr, count, altConst, CF_INST_ALU::ALU, barrier));
 	}
 	u64 TEX(u32 addr, u32 count, bool barrier = BARRIER) {
@@ -325,8 +352,6 @@ public:
 		semantics_.push_back({ num_gprs, semantic });
 		return Reg(num_gprs++);
 	}
-
-	Constant makeConstant(UB_Bindings binding, size_t offset) { return Constant(binding, offset, this); }
 
 	SrcChannel C(float val) {
 		if (val == 0.0f) {
@@ -571,13 +596,13 @@ public:
 	GX2VertexShaderEmitter() {
 		num_gprs = 1;
 		CALL_FS(false);
-	}	
+	}
 	void EXP_POS(Reg srcReg, bool barrier = BARRIER) { EXP((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
 	void EXP_PARAM(PSInput param, Reg srcReg, bool barrier = BARRIER) {
 		EXP((ExportType)(PARAM0 + param_exports.size()), srcReg, barrier);
 		param_exports.push_back(param);
 	}
-	Reg allocImportReg(VSInput semantic) { return GX2Emitter::allocImportReg((u32) semantic); }
+	Reg allocImportReg(VSInput semantic) { return GX2Emitter::allocImportReg((u32)semantic); }
 	void END_OF_PROGRAM(GX2VertexShader *vs) {
 		GX2Emitter::END_OF_PROGRAM();
 
@@ -627,7 +652,7 @@ private:
 class GX2PixelShaderEmitter : public GX2Emitter {
 public:
 	GX2PixelShaderEmitter() {}
-	Reg allocImportReg(PSInput semantic) { return GX2Emitter::allocImportReg((u32) semantic); }
+	Reg allocImportReg(PSInput semantic) { return GX2Emitter::allocImportReg((u32)semantic); }
 
 	void END_OF_PROGRAM(GX2PixelShader *ps) {
 		GX2Emitter::END_OF_PROGRAM();
