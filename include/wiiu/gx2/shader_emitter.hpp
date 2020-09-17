@@ -54,29 +54,47 @@ enum AluSrc : u32 {
 	ALU_SRC_PV = 0xFE,
 	ALU_SRC_PS = 0xFF,
 };
-struct SrcReg {
-	SrcReg(u32 id_, Channel ch_) : id(id_), ch(ch_) {}
+
+enum : u32 {
+	GPR_FIRST = 0x00,
+	GPR_LAST = 0x77,
+	INVALID_GPR0,
+	INVALID_GPR1,
+	INVALID_GPR2,
+	INVALID_GPR3,
+	TEMP_GPR0,
+	TEMP_GPR1,
+	TEMP_GPR2,
+	TEMP_GPR3,
+
+	ALU_SRC_KCACHE_SIZE = 0x20,
+	ALU_SRC_KCACHE0_BASE = 0x80,
+	ALU_SRC_KCACHE1_BASE = ALU_SRC_KCACHE0_BASE + ALU_SRC_KCACHE_SIZE,
+	VALID_PIX = 1,
+	BARRIER = true,
+	NO_BARRIER = false,
+};
+
+struct SrcChannel {
+	SrcChannel(u32 id_, Channel ch_) : id(id_), ch(ch_) {}
 	u32 id;
 	Channel ch;
 };
-struct DstReg {
-	DstReg(u32 id_, Channel ch_, bool write_mask_ = true) : id(id_), ch(ch_), write_mask(write_mask_) {}
+struct DstChannel {
+	DstChannel(u32 id_, Channel ch_, bool write_mask_ = true) : id(id_), ch(ch_), write_mask(write_mask_) {
+		_assert_(id < ALU_SRC_KCACHE0_BASE);
+	}
 	u32 id;
 	Channel ch;
 	bool write_mask;
-};
-struct PARAM {
-	PARAM(PSInput id) : type((ExportType)(EXPORT_TYPE_PARAM + (u32)id)) {}
-	ExportType type;
-	operator ExportType() { return type; }
 };
 struct RegChannel {
 	RegChannel(u32 id_, Channel ch_, bool writeMask_ = true) : id(id_), ch(ch_), writeMask(writeMask_) {}
 	u32 id;
 	bool writeMask;
 	Channel ch;
-	operator SrcReg() { return SrcReg(id, ch); }
-	operator DstReg() { return DstReg(id, ch, writeMask); }
+	operator SrcChannel() { return SrcChannel(id, ch); }
+	operator DstChannel() { return DstChannel(id, ch, writeMask); }
 };
 struct Reg {
 	Reg(u32 id_, bool writeMask_ = true) :
@@ -102,12 +120,17 @@ struct Reg {
 	RegChannel operator()(Channel c) const { return RegChannel(id, ch[c], writeMask); }
 };
 
-static const Reg PV(ALU_SRC_PV);
-static const SrcReg PS(ALU_SRC_PS, x);
-static const Reg ___(0, false);
-
 class Constant;
 class GX2Emitter;
+
+
+static const Reg PV(ALU_SRC_PV);
+static const SrcChannel PS(ALU_SRC_PS, x);
+static const Reg ___(0, false);
+static const Reg _temp0(TEMP_GPR0);
+static const Reg _temp1(TEMP_GPR1);
+static const Reg _temp2(TEMP_GPR2);
+static const Reg _temp3(TEMP_GPR3);
 
 class GX2Emitter {
 public:
@@ -118,24 +141,12 @@ public:
 			_assert_(!(offset & 0xF)); // vec4 aligned
 		}
 		Reg operator[](int index) { return emitter_->lockKCacheLane((int)binding_, offset_ + index); }
-		SrcReg operator()(Channel c) { return operator[](0)(c); }
+		SrcChannel operator()(Channel c) { return operator[](0)(c); }
 
 	private:
 		int binding_;
 		size_t offset_;
 		GX2Emitter *emitter_;
-	};
-	enum : u32 {
-		INVALID_SEMANTIC = ~0u,
-		TEMP_GPR_FIRST = 0x78,
-		TEMP_GPR_LAST = 0x7f,
-
-		VALID_PIX = 1,
-		ALU_SRC_KCACHE_SIZE = 0x20,
-		ALU_SRC_KCACHE0_BASE = 0x80,
-		ALU_SRC_KCACHE1_BASE = ALU_SRC_KCACHE0_BASE + ALU_SRC_KCACHE_SIZE,
-		BARRIER = true,
-		NO_BARRIER = false,
 	};
 
 protected:
@@ -176,6 +187,25 @@ public:
 	void END_OF_PROGRAM() {
 		program.clear();
 		cf_.back() = cf_.back() | QWORD(0, 1 << 21);
+
+		if (patch_export_pos_ != -1) {
+			u32 w0 = WORD0(cf_[patch_export_pos_]);
+			u32 w1 = WORD1(cf_[patch_export_pos_]);
+			((CF_ALLOC_EXPORT_WORD1 *)&w1)->cfInst = CF_INST_EXP::EXP_DONE;
+			cf_[patch_export_pos_] = QWORD(w0, w1);
+		}
+		if (patch_export_pix_ != -1) {
+			u32 w0 = WORD0(cf_[patch_export_pix_]);
+			u32 w1 = WORD1(cf_[patch_export_pix_]);
+			((CF_ALLOC_EXPORT_WORD1 *)&w1)->cfInst = CF_INST_EXP::EXP_DONE;
+			cf_[patch_export_pix_] = QWORD(w0, w1);
+		}
+		if (patch_export_param_ != -1) {
+			u32 w0 = WORD0(cf_[patch_export_param_]);
+			u32 w1 = WORD1(cf_[patch_export_param_]);
+			((CF_ALLOC_EXPORT_WORD1 *)&w1)->cfInst = CF_INST_EXP::EXP_DONE;
+			cf_[patch_export_param_] = QWORD(w0, w1);
+		}
 		for (u64 word : cf_)
 			program.push_back(word);
 		// align to 32 Qwords
@@ -209,52 +239,71 @@ public:
 		return QWORD(CF_DWORD0(addr), CF_DWORD1(CF_INST::TEX, barrier, count - 1, VALID_PIX));
 	}
 
-	void ALU_LAST() { alu_.back() |= QWORD((1ull << 31), 0); }
-
-#define EMIT_ALU_OP2(op2) \
-	void op2(DstReg dst, SrcReg src0, SrcReg src1 = SrcReg(ALU_SRC_0, x)) { \
-		ALU_OP2(ALU_OP2_INST::op2, dst, src0, src1, ALU_OMOD::OFF); \
-	} \
-	void op2##x2(DstReg dst, SrcReg src0, SrcReg src1 = SrcReg(ALU_SRC_0, x)) { \
-		ALU_OP2(ALU_OP2_INST::op2, dst, src0, src1, ALU_OMOD::M2); \
-	} \
-	void op2##x4(DstReg dst, SrcReg src0, SrcReg src1 = SrcReg(ALU_SRC_0, x)) { \
-		ALU_OP2(ALU_OP2_INST::op2, dst, src0, src1, ALU_OMOD::M4); \
-	} \
-	void op2##d2(DstReg dst, SrcReg src0, SrcReg src1 = SrcReg(ALU_SRC_0, x)) { \
-		ALU_OP2(ALU_OP2_INST::op2, dst, src0, src1, ALU_OMOD::D2); \
+	void ALU_LAST() {
+		alu_.back() |= QWORD((1ull << 31), 0);
+		switch (alu_literals.size()) {
+		case 1: alu_.push_back(QWORD(alu_literals[0], 0)); break;
+		case 2: alu_.push_back(QWORD(alu_literals[0], alu_literals[1])); break;
+		case 3:
+			alu_.push_back(QWORD(alu_literals[0], alu_literals[1]));
+			alu_.push_back(QWORD(alu_literals[2], 0));
+			break;
+		case 4:
+			alu_.push_back(QWORD(alu_literals[0], alu_literals[1]));
+			alu_.push_back(QWORD(alu_literals[2], alu_literals[3]));
+			break;
+		default: break;
+		}
+		alu_literals.clear();
 	}
 
-	EMIT_ALU_OP2(ADD)
-	EMIT_ALU_OP2(MUL)
-	EMIT_ALU_OP2(MUL_IEEE)
-	EMIT_ALU_OP2(MIN)
-	EMIT_ALU_OP2(MAX)
-	EMIT_ALU_OP2(MAX_DX10)
-	EMIT_ALU_OP2(FRACT)
-	EMIT_ALU_OP2(SETGT)
-	EMIT_ALU_OP2(SETE_DX10)
-	EMIT_ALU_OP2(SETGT_DX10)
-	EMIT_ALU_OP2(FLOOR)
-	EMIT_ALU_OP2(MOV)
-	EMIT_ALU_OP2(PRED_SETGT)
-	EMIT_ALU_OP2(PRED_SETE_INT)
-	EMIT_ALU_OP2(DOT4)
-	EMIT_ALU_OP2(DOT4_IEEE)
-	EMIT_ALU_OP2(RECIP_IEEE)
-	EMIT_ALU_OP2(RECIPSQRT_IEEE)
-	EMIT_ALU_OP2(SQRT_IEEE)
-	EMIT_ALU_OP2(SIN)
-	EMIT_ALU_OP2(COS)
+#undef EMIT_ALU_OP2
+#define EMIT_ALU_OP2(op2, val) \
+	void op2(Channel unit = x) { ALU_OP2(ALU_OP2_INST::op2, ___(unit)); }
+	ALU_OP2_D_LIST
 
 #undef EMIT_ALU_OP2
+#define EMIT_ALU_OP2(op2, val) \
+	void op2(DstChannel dst, SrcChannel src0) { ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::OFF, src0); } \
+	void op2##x2(DstChannel dst, SrcChannel src0) { ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::M2, src0); } \
+	void op2##X4(DstChannel dst, SrcChannel src0) { ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::M4, src0); } \
+	void op2##d2(DstChannel dst, SrcChannel src0) { ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::D2, src0); }
+	ALU_OP2_DS_LIST
+	ALU_OP2_DS_T_LIST
 
-#define EMIT_ALU_OP3(op3) \
-	void op3(DstReg dst, SrcReg src0, SrcReg src1, SrcReg src2) { ALU_OP3(ALU_OP3_INST::op3, dst, src0, src1, src2); }
+#undef EMIT_ALU_OP2
+#define EMIT_ALU_OP2(op2, val) \
+	void op2(DstChannel dst, SrcChannel src0, SrcChannel src1) { \
+		ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::OFF, src0, src1); \
+	} \
+	void op2##x2(DstChannel dst, SrcChannel src0, SrcChannel src1) { \
+		ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::M2, src0, src1); \
+	} \
+	void op2##x4(DstChannel dst, SrcChannel src0, SrcChannel src1) { \
+		ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::M4, src0, src1); \
+	} \
+	void op2##d2(DstChannel dst, SrcChannel src0, SrcChannel src1) { \
+		ALU_OP2(ALU_OP2_INST::op2, dst, ALU_OMOD::D2, src0, src1); \
+	}
+	ALU_OP2_DSS_LIST
+	ALU_OP2_DSS_T_LIST
 
-	EMIT_ALU_OP3(MULADD)
-	EMIT_ALU_OP3(CNDGT)
-	EMIT_ALU_OP3(CNDE_INT)
+#undef EMIT_ALU_OP2
+#define EMIT_ALU_OP2(op2, val) \
+	void op2(Channel unit, SrcChannel src0, SrcChannel src1) { \
+		kill_enable_ = true; \
+		ALU_OP2(ALU_OP2_INST::op2, ___(unit), ALU_OMOD::OFF, src0, src1); \
+	}
+	ALU_OP2_KILL_LIST
+
+#undef EMIT_ALU_OP3
+#define EMIT_ALU_OP3(op3, val) \
+	void op3(DstChannel dst, SrcChannel src0, SrcChannel src1, SrcChannel src2) { \
+		ALU_OP3(ALU_OP3_INST::op3, dst, src0, src1, src2); \
+	}
+
+	ALU_OP3_LIST
+	ALU_OP3_T_LIST
 
 #undef EMIT_ALU_OP3
 
@@ -265,34 +314,52 @@ public:
 				  TEX_WORD2(0x0, 0x0, 0x0, samplerID, src.x, src.y, src.z, src.w));
 	}
 
-	Reg allocReg(u32 semantic = INVALID_SEMANTIC) {
-		u32 id;
-		if (semantic == INVALID_SEMANTIC) {
-			id = TEMP_GPR_FIRST + num_temp_gprs++;
-			if (id > TEMP_GPR_LAST)
-				abort();
-		} else {
-			id = num_gprs++;
-			semantics_.push_back({ id, semantic });
-		}
-		return Reg(id);
+	Reg allocReg() {
+		_assert_(num_gprs < GPR_LAST);
+		return Reg(num_gprs++);
+	}
+
+	Reg allocImportReg(u32 semantic) {
+		_assert_(num_gprs == semantics_.size()); // import Regs need to be allocated first.
+		_assert_(num_gprs < GPR_LAST);
+		semantics_.push_back({ num_gprs, semantic });
+		return Reg(num_gprs++);
 	}
 
 	Constant makeConstant(UB_Bindings binding, size_t offset) { return Constant(binding, offset, this); }
 
-	SrcReg C(float val) {
+	SrcChannel C(float val) {
 		if (val == 0.0f) {
-			return SrcReg(ALU_SRC_0, x);
+			return SrcChannel(ALU_SRC_0, x);
 		} else if (val == 1.0f) {
-			return SrcReg(ALU_SRC_1, x);
+			return SrcChannel(ALU_SRC_1, x);
 		} else if (val == 0.5f) {
-			return SrcReg(ALU_SRC_0_5, x);
+			return SrcChannel(ALU_SRC_0_5, x);
 		}
-		alu_literals.push_back(__builtin_bswap32(*(u32 *)&val));
+		for (int i = 0; i < alu_literals.size(); i++)
+			if (*(u32 *)&val == alu_literals[i])
+				return SrcChannel(ALU_SRC_LITERAL, (Channel)(i));
+
+		alu_literals.push_back(*(u32 *)&val);
 		_assert_(alu_literals.size() < 5);
-		return SrcReg(ALU_SRC_LITERAL, (Channel)(alu_literals.size() - 1));
+		return SrcChannel(ALU_SRC_LITERAL, (Channel)(alu_literals.size() - 1));
 	}
-	//   SrcReg PV() { return SrcReg(ALU_SRC_PV, x); }
+	SrcChannel C(u32 val) {
+		if (val == 0) {
+			return SrcChannel(ALU_SRC_0, x);
+		} else if (val == 1) {
+			return SrcChannel(ALU_SRC_1_INT, x);
+		} else if (val == -1) {
+			return SrcChannel(ALU_SRC_M_1_INT, x);
+		}
+		for (int i = 0; i < alu_literals.size(); i++)
+			if (val == alu_literals[i])
+				return SrcChannel(ALU_SRC_LITERAL, (Channel)(i));
+
+		alu_literals.push_back(val);
+		_assert_(alu_literals.size() < 5);
+		return SrcChannel(ALU_SRC_LITERAL, (Channel)(alu_literals.size() - 1));
+	}
 
 	std::vector<u64> cf_;
 	std::vector<u64> alu_;
@@ -302,24 +369,31 @@ public:
 	std::vector<u64> program;
 	std::vector<u32> regs;
 
-	void EXP_DONE(ExportType dstReg_and_type, Reg srcReg, bool barrier = BARRIER) {
-		emitCF(CF_EXP_WORD0(dstReg_and_type, srcReg.id, 0x0, 0x0, 0x0),
-				 CF_EXP_WORD1(srcReg.x, srcReg.y, srcReg.z, srcReg.w, 0x0, CF_INST_EXP::EXP_DONE, barrier));
-	}
-
 	void EXP(ExportType dstReg_and_type, Reg srcReg, bool barrier = BARRIER) {
+		checkCF(Mode::CF);
+		switch (dstReg_and_type & EXPORT_TYPE_MASK) {
+		case EXPORT_TYPE_POS: patch_export_pos_ = cf_.size(); break;
+		case EXPORT_TYPE_PIX:
+			patch_export_pix_ = cf_.size();
+			_assert_(dstReg_and_type - EXPORT_TYPE_PIX < sizeof(pix_exports_) / sizeof(*pix_exports_));
+			pix_exports_[dstReg_and_type - EXPORT_TYPE_PIX] = true;
+			break;
+		default:
+		case EXPORT_TYPE_PARAM: patch_export_param_ = cf_.size(); break;
+		}
 		emitCF(CF_EXP_WORD0(dstReg_and_type, srcReg.id, 0x0, 0x0, 0x0),
 				 CF_EXP_WORD1(srcReg.x, srcReg.y, srcReg.z, srcReg.w, 0x0, CF_INST_EXP::EXP, barrier));
 	}
 
 protected:
 	u32 num_gprs = 0;
-	u32 num_temp_gprs = 0;
+	bool kill_enable_ = false;
 	struct Semantic {
 		u32 reg;
 		u32 value;
 	};
 	std::vector<Semantic> semantics_;
+	bool pix_exports_[0x8] = {};
 
 private:
 	struct patch_ALU {
@@ -336,15 +410,23 @@ private:
 	};
 	std::vector<patch_ALU> patch_alu_;
 	std::vector<patch_TEX> patch_tex_;
+	size_t patch_export_pos_ = -1;
+	size_t patch_export_param_ = -1;
+	size_t patch_export_pix_ = -1;
 
 	enum class Mode { CF, ALU, TEX, VTX };
 	Mode mode_ = Mode::CF;
 
 #ifdef __BIG_ENDIAN__
 	u64 QWORD(u32 word0, u32 word1 = 0) { return __builtin_bswap64((u64)word0 | ((u64)word1 << 32ull)); }
+	u32 WORD0(u64 dword) { return __builtin_bswap32(dword >> 32ull); }
+	u32 WORD1(u64 dword) { return __builtin_bswap32((u32)dword); }
 #else
 	u64 QWORD(u32 word0, u32 word1 = 0) { return (u64)word0 | ((u64)word1 << 32ull); }
+	u32 WORD0(u64 dword) { return (u32)dword; }
+	u32 WORD1(u64 dword) { return dword >> 32ull; }
 #endif
+
 	void checkCF(Mode newMode) {
 		if (newMode == mode_)
 			return;
@@ -469,18 +551,15 @@ private:
 	}
 
 	u32 VTX_WORD2(u32 offset, u32 ismega) { return (offset | (ismega << 19)); }
-	void ALU_OP(ALU_OP2_INST inst, DstReg dst, SrcReg src0, SrcReg src1, ALU_OMOD omod) {
-		ALU_OP2(inst, dst, src0, src1, omod);
-	}
-	void ALU_OP(ALU_OP3_INST inst, DstReg dst, SrcReg src0, SrcReg src1, SrcReg src2) {
-		ALU_OP3(inst, dst, src0, src1, src2);
-	}
-	void ALU_OP2(ALU_OP2_INST inst, DstReg dst, SrcReg src0, SrcReg src1, ALU_OMOD omod) {
+
+	void ALU_OP2(ALU_OP2_INST inst, DstChannel dst, ALU_OMOD omod = ALU_OMOD::OFF,
+					 SrcChannel src0 = SrcChannel(ALU_SRC_0, x), SrcChannel src1 = SrcChannel(ALU_SRC_0, x)) {
 		emitALU(ALU_WORD0(src0.id, 0x0, src0.ch, 0x0, ((src1.id) & ((1 << 13) - 1)), 0x0, src1.ch, 0x0, 0x0, 0x0),
-				  ALU_WORD1_OP2(0x0, 0x0, 0x0, 0x0, dst.write_mask, omod, inst, 0x0, 0x0, dst.id, 0x0, dst.ch, 0x0));
+				  ALU_WORD1_OP2(0x0, 0x0, 0x0, 0x0, !!dst.write_mask, omod, inst, 0x0, 0x0, dst.id, 0x0, dst.ch, 0x0));
 	}
 
-	void ALU_OP3(ALU_OP3_INST inst, DstReg dst, SrcReg src0, SrcReg src1, SrcReg src2) {
+	void ALU_OP3(ALU_OP3_INST inst, DstChannel dst, SrcChannel src0, SrcChannel src1, SrcChannel src2) {
+		// todo: use _R122 for T and _R123 for xyzw when dst.write_mask == false;
 		_assert_(dst.write_mask);
 		emitALU(ALU_WORD0(src0.id, 0x0, src0.ch, 0x0, src1.id, 0x0, src1.ch, 0x0, 0x0, 0x0),
 				  ALU_WORD1_OP3(src2.id, 0x0, src2.ch, 0x0, inst, 0x0, dst.id, 0x0, dst.ch, 0x0));
@@ -492,18 +571,13 @@ public:
 	GX2VertexShaderEmitter() {
 		num_gprs = 1;
 		CALL_FS(false);
-	}
-	void EXP_DONE_POS(Reg srcReg, bool barrier = BARRIER) { EXP_DONE((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
+	}	
 	void EXP_POS(Reg srcReg, bool barrier = BARRIER) { EXP((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
-	void EXP_DONE_PARAM(PSInput param, Reg srcReg, bool barrier = BARRIER) {
-		EXP_DONE((ExportType)(PARAM0 + param_exports.size()), srcReg, barrier);
-		param_exports.push_back(param);
-	}
 	void EXP_PARAM(PSInput param, Reg srcReg, bool barrier = BARRIER) {
 		EXP((ExportType)(PARAM0 + param_exports.size()), srcReg, barrier);
 		param_exports.push_back(param);
 	}
-	Reg allocReg(VSInput semantic = (VSInput)INVALID_SEMANTIC) { return GX2Emitter::allocReg((u32)semantic); }
+	Reg allocImportReg(VSInput semantic) { return GX2Emitter::allocImportReg((u32) semantic); }
 	void END_OF_PROGRAM(GX2VertexShader *vs) {
 		GX2Emitter::END_OF_PROGRAM();
 
@@ -515,11 +589,13 @@ public:
 		vs->gx2rBuffer.flags = (GX2RResourceFlags)(vs->gx2rBuffer.flags & ~GX2R_RESOURCE_LOCKED_READ_ONLY);
 		memcpy(vs->program, program.data(), vs->size);
 		GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, vs->program, vs->size);
+		vs->mode = GX2_SHADER_MODE_UNIFORM_BLOCK;
 
 		/* regs */
+		memset(&vs->regs, 0, sizeof(vs->regs));
 		vs->regs.sq_pgm_resources_vs.num_gprs = num_gprs;
 		vs->regs.sq_pgm_resources_vs.stack_size = 1;
-		vs->regs.spi_vs_out_config.vs_export_count = param_exports.size() >> 1; /* ? */
+		vs->regs.spi_vs_out_config.vs_export_count = param_exports.size() ? param_exports.size() - 1 : 0; /* ? */
 		vs->regs.num_spi_vs_out_id = (param_exports.size() + 3) >> 2;
 		memset(vs->regs.spi_vs_out_id, 0xFF, sizeof(vs->regs.spi_vs_out_id));
 		for (int i = 0; i < param_exports.size(); i++) {
@@ -551,9 +627,7 @@ private:
 class GX2PixelShaderEmitter : public GX2Emitter {
 public:
 	GX2PixelShaderEmitter() {}
-	Reg allocReg(PSInput semantic = (PSInput)INVALID_SEMANTIC) { return GX2Emitter::allocReg((u32)semantic); }
-	void EXP_DONE_PIX(Reg srcReg, bool barrier = BARRIER) { EXP_DONE((ExportType)(PIX0 + exports++), srcReg, barrier); }
-	void EXP_PIX(Reg srcReg, bool barrier = BARRIER) { EXP((ExportType)(PIX0 + exports++), srcReg, barrier); }
+	Reg allocImportReg(PSInput semantic) { return GX2Emitter::allocImportReg((u32) semantic); }
 
 	void END_OF_PROGRAM(GX2PixelShader *ps) {
 		GX2Emitter::END_OF_PROGRAM();
@@ -567,26 +641,66 @@ public:
 		ps->gx2rBuffer.flags = (GX2RResourceFlags)(ps->gx2rBuffer.flags & ~GX2R_RESOURCE_LOCKED_READ_ONLY);
 		memcpy(ps->program, program.data(), ps->size);
 		GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, ps->program, ps->size);
+		ps->mode = GX2_SHADER_MODE_UNIFORM_BLOCK;
 
 		/* regs */
+		memset(&ps->regs, 0, sizeof(ps->regs));
 		ps->regs.sq_pgm_resources_ps.num_gprs = num_gprs;
 		ps->regs.sq_pgm_resources_ps.stack_size = 0;
-		ps->regs.sq_pgm_exports_ps.export_mode = 0x2;
 		ps->regs.spi_ps_in_control_0.num_interp = semantics_.size();
 		ps->regs.spi_ps_in_control_0.persp_gradient_ena = TRUE;
 		ps->regs.spi_ps_in_control_0.baryc_sample_cntl = spi_baryc_cntl_centers_only;
 		ps->regs.num_spi_ps_input_cntl = semantics_.size();
 		for (Semantic s : semantics_) {
 			ps->regs.spi_ps_input_cntls[s.reg].semantic = s.value;
-			ps->regs.spi_ps_input_cntls[s.reg].default_val = 1;
+			ps->regs.spi_ps_input_cntls[s.reg].default_val = 1; // (0.0f, 0.0f, 0.0f, 1.0f)
 		}
-		ps->regs.cb_shader_mask.output0_enable = 0xF;
-		ps->regs.cb_shader_control.rt0_enable = TRUE;
-		ps->regs.db_shader_control.z_order = db_z_order_early_z_then_late_z;
-	}
 
-private:
-	u32 exports = 0;
+		if (pix_exports_[0]) {
+			ps->regs.cb_shader_mask.output0_enable = 0xF;
+			ps->regs.cb_shader_control.rt0_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		if (pix_exports_[1]) {
+			ps->regs.cb_shader_mask.output1_enable = 0xF;
+			ps->regs.cb_shader_control.rt1_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		if (pix_exports_[2]) {
+			ps->regs.cb_shader_mask.output2_enable = 0xF;
+			ps->regs.cb_shader_control.rt2_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		if (pix_exports_[3]) {
+			ps->regs.cb_shader_mask.output3_enable = 0xF;
+			ps->regs.cb_shader_control.rt3_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		if (pix_exports_[4]) {
+			ps->regs.cb_shader_mask.output4_enable = 0xF;
+			ps->regs.cb_shader_control.rt4_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		if (pix_exports_[5]) {
+			ps->regs.cb_shader_mask.output5_enable = 0xF;
+			ps->regs.cb_shader_control.rt5_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		if (pix_exports_[6]) {
+			ps->regs.cb_shader_mask.output6_enable = 0xF;
+			ps->regs.cb_shader_control.rt6_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		if (pix_exports_[7]) {
+			ps->regs.cb_shader_mask.output7_enable = 0xF;
+			ps->regs.cb_shader_control.rt7_enable = TRUE;
+			ps->regs.sq_pgm_exports_ps.exports++;
+		}
+		_assert_(ps->regs.sq_pgm_exports_ps.exports > 0 || ps->regs.sq_pgm_exports_ps.export_z > 0);
+
+		ps->regs.db_shader_control.z_order = db_z_order_early_z_then_late_z;
+		ps->regs.db_shader_control.kill_enable = kill_enable_;
+	}
 };
 
 } // namespace GX2Gen

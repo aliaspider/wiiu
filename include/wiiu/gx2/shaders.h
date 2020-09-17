@@ -233,11 +233,20 @@ typedef struct GX2PixelShader
             unsigned num_gprs : 8;
          } sq_pgm_resources_ps;
 
-         struct
+         union
          {
-            unsigned : 27;
-            unsigned export_mode : 5;
-         } sq_pgm_exports_ps;
+            struct
+            {
+               unsigned : 27;
+               unsigned export_mode : 5;
+            };
+            struct
+            {
+               unsigned : 27;
+               unsigned exports : 4;
+               unsigned export_z : 1;
+            };
+         }sq_pgm_exports_ps;
 
          struct
          {
@@ -281,6 +290,10 @@ typedef struct GX2PixelShader
             bool sel_linear : 1;
             bool sel_centroid : 1;
             bool flat_shade : 1;
+            // 0: (0.0f, 0.0f, 0.0f, 0.0f)
+            // 1: (0.0f, 0.0f, 0.0f, 1.0f)
+            // 2: (1.0f, 1.0f, 1.0f, 0.0f)
+            // 3: (1,0f, 1.0f, 1.0f, 1.0f)
             unsigned default_val : 2;
             unsigned semantic : 8;
          } spi_ps_input_cntls[32];

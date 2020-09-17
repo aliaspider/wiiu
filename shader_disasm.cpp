@@ -189,7 +189,7 @@ void GX2ShaderDisassembler::ALU_SRC_LITERAL(u32 chan) {
 	while (!((ALU_WORD0 *)src)->last)
 		src += 2;
 	src += 2;
-	Emit("(0x%08X, %.0f)", src[chan], *(float *)&src[chan]);
+	Emit("(0x%08X, %g)", src[chan], *(float *)&src[chan]);
 	aluLiterals_ = (chan >> 1) + 1;
 }
 void GX2ShaderDisassembler::ALU_SRC(u32 sel, u32 chan, bool neg) {
@@ -293,12 +293,11 @@ void GX2ShaderDisassembler::ALU(CF_ALU_WORD0 w0, CF_ALU_WORD1 w1) {
 		ALU_WORD1_OP2 alu1op2 = *(ALU_WORD1_OP2 *)&alu1;
 		ALU_WORD1_OP3 alu1op3 = *(ALU_WORD1_OP3 *)&alu1;
 
-		if (aluLiterals_) {
-			aluLiterals_--;
-			continue;
-		}
-
 		if (aluFirst) {
+			if (aluLiterals_) {
+				aluLiterals_--;
+				continue;
+			}
 			if (i > 0)
 				Endl();
 			Emit("%2i", groupIndex_++);
