@@ -37,8 +37,10 @@ enum Channel : u32 {
 	a = w,
 	_0_ = 4,
 	_1_ = 5,
+	__ = 7,
 	zero = _0_,
 	one = _1_,
+	mask = __,
 };
 enum AluSrc : u32 {
 	ALU_SRC_1_DBL_L = 0xF4,
@@ -98,16 +100,15 @@ struct RegChannel {
 };
 struct Reg {
 	Reg(u32 id_, bool writeMask_ = true) :
-		id(id_),
-		writeMask(writeMask_),
-		ch{ Channel::x, Channel::y, Channel::z, Channel::w, Channel::_0_, Channel::_1_ } {}
+		id(id_), writeMask(writeMask_), ch{ Channel::x,   Channel::y,   Channel::z,  Channel::w,
+														Channel::_0_, Channel::_1_, Channel::__, Channel::__ } {}
 	u32 id;
 	bool writeMask;
 	union {
 		struct {
 			Channel x, y, z, w, zero, one;
 		};
-		Channel ch[6];
+		Channel ch[8];
 	};
 	Reg operator()(Channel c0, Channel c1, Channel c2, Channel c3) const {
 		Reg r(id, writeMask);
@@ -142,7 +143,7 @@ public:
 		operator SrcChannel() { return emitter_->lockKCacheLane(binding_, offset_ >> 4)(Channel((offset_ >> 2) & 0x3)); }
 
 	private:
-		UB_Bindings  binding_;
+		UB_Bindings binding_;
 		size_t offset_;
 		GX2Emitter *emitter_;
 	};
@@ -150,7 +151,7 @@ public:
 	class KCacheReg {
 	public:
 		KCacheReg(UB_Bindings binding, size_t offset, GX2Emitter *emitter) :
-			binding_(binding), offset_(offset >> 4), emitter_(emitter) {
+			binding_(binding), offset_(offset), emitter_(emitter) {
 			_assert_(!(offset & 0xF)); // vec4 aligned
 		}
 		KCacheChannel operator()(Channel c) {
@@ -170,7 +171,7 @@ public:
 			binding_(binding), offset_(offset), emitter_(emitter) {
 			_assert_(!(offset & 0xF)); // vec4 aligned
 		}
-		KCacheReg operator[](int index) { return KCacheReg(binding_, offset_ + index << 4, emitter_); }
+		KCacheReg operator[](int index) { return KCacheReg(binding_, offset_ + (index << 4), emitter_); }
 
 	private:
 		UB_Bindings binding_;
@@ -206,6 +207,7 @@ public:
 		_assert_(i < 2);
 		return Reg(lane - (kCache[i].addr << 4) + ALU_SRC_KCACHE0_BASE + i * ALU_SRC_KCACHE_SIZE);
 	}
+
 protected:
 	GX2Emitter() {}
 	~GX2Emitter() {}
@@ -579,13 +581,14 @@ private:
 
 	void ALU_OP2(ALU_OP2_INST inst, DstChannel dst, ALU_OMOD omod = ALU_OMOD::OFF,
 					 SrcChannel src0 = SrcChannel(ALU_SRC_0, x), SrcChannel src1 = SrcChannel(ALU_SRC_0, x)) {
-		emitALU(ALU_WORD0(src0.id, 0x0, src0.ch, 0x0, ((src1.id) & ((1 << 13) - 1)), 0x0, src1.ch, 0x0, 0x0, 0x0),
+		emitALU(ALU_WORD0(src0.id, 0x0, src0.ch, 0x0, src1.id, 0x0, src1.ch, 0x0, 0x0, 0x0),
 				  ALU_WORD1_OP2(0x0, 0x0, 0x0, 0x0, !!dst.write_mask, omod, inst, 0x0, 0x0, dst.id, 0x0, dst.ch, 0x0));
 	}
 
 	void ALU_OP3(ALU_OP3_INST inst, DstChannel dst, SrcChannel src0, SrcChannel src1, SrcChannel src2) {
-		// todo: use _R122 for T and _R123 for xyzw when dst.write_mask == false;
-		_assert_(dst.write_mask);
+		if (!dst.write_mask)
+			dst = ALU_OP_IS_TRANS(inst) ? Reg(INVALID_GPR2)(dst.ch) : Reg(INVALID_GPR3)(dst.ch);
+
 		emitALU(ALU_WORD0(src0.id, 0x0, src0.ch, 0x0, src1.id, 0x0, src1.ch, 0x0, 0x0, 0x0),
 				  ALU_WORD1_OP3(src2.id, 0x0, src2.ch, 0x0, inst, 0x0, dst.id, 0x0, dst.ch, 0x0));
 	}
@@ -594,7 +597,7 @@ private:
 class GX2VertexShaderEmitter : public GX2Emitter {
 public:
 	GX2VertexShaderEmitter() {
-		num_gprs = 1;
+		allocImportReg((VSInput)-1); // R0 is skipped for whatever reason.
 		CALL_FS(false);
 	}
 	void EXP_POS(Reg srcReg, bool barrier = BARRIER) { EXP((ExportType)(POS0 + pos_exports++), srcReg, barrier); }
@@ -632,11 +635,13 @@ public:
 			}
 		}
 		vs->regs.sq_vtx_semantic_clear = ~0u;
-		vs->regs.num_sq_vtx_semantic = semantics_.size();
+		vs->regs.num_sq_vtx_semantic = semantics_.size() - 1;
 
 		for (int i = 0; i < countof(vs->regs.sq_vtx_semantic); i++)
 			vs->regs.sq_vtx_semantic[i] = 0xFF;
 		for (Semantic s : semantics_) {
+			if (s.reg == 0)
+				continue;
 			vs->regs.sq_vtx_semantic[s.reg - 1] = s.value;
 			vs->regs.sq_vtx_semantic_clear &= ~(1 << (s.reg - 1));
 		}
