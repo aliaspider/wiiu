@@ -14,7 +14,6 @@
 #include "fs_utils.h"
 #include "sd_fat_devoptab.h"
 #include "exception_handler.h"
-#define HAVE_LIBFAT
 
 void wiiu_log_init(void);
 void wiiu_log_deinit(void);
@@ -22,26 +21,23 @@ int main(int argc, char **argv);
 
 void __eabi(void) {}
 
-void __init(void) {
-	extern void (*const __CTOR_LIST__)(void);
-	extern void (*const __CTOR_END__)(void);
+__attribute__((section(".ctor"))) extern void (*const __CTOR_LIST__)(void);
+__attribute__((section(".ctor"))) extern void (*const __CTOR_END__)(void);
+__attribute__((section(".dtor"))) extern void (*const __DTOR_LIST__)(void);
+__attribute__((section(".dtor"))) extern void (*const __DTOR_END__)(void);
 
+void __init(void) {
 	void (*const *ctor)(void) = &__CTOR_LIST__;
-	while (ctor < &__CTOR_END__) {
+	while (ctor < &__CTOR_END__)
 		(*ctor++)();
-	}
 }
 
 void __fini(void) {
-	extern void (*const __DTOR_LIST__)(void);
-	extern void (*const __DTOR_END__)(void);
-
 	void (*const *dtor)(void) = &__DTOR_LIST__;
-	while (dtor < &__DTOR_END__) {
+	while (dtor < &__DTOR_END__)
 		(*dtor++)();
-	}
 }
-#ifdef HAVE_LIBFAT
+
 /* libiosuhax related */
 
 // just to be able to call async
@@ -82,10 +78,9 @@ void MCPHookClose(void) {
 }
 
 static int iosuhaxMount = 0;
-#endif
 
 static void fsdev_init(void) {
-#ifdef HAVE_LIBFAT
+
 	iosuhaxMount = 0;
 	if (!OSIsHLE()) {
 		int res = IOSUHAX_Open(NULL);
@@ -99,11 +94,9 @@ static void fsdev_init(void) {
 			return;
 		}
 	}
-#endif
 	mount_sd_fat("sd");
 }
 static void fsdev_exit(void) {
-#ifdef HAVE_LIBFAT
 	if (iosuhaxMount) {
 		fatUnmount("sd:");
 		fatUnmount("usb:");
@@ -114,7 +107,6 @@ static void fsdev_exit(void) {
 			IOSUHAX_Close();
 		return;
 	}
-#endif
 	unmount_sd_fat("sd");
 }
 
@@ -128,17 +120,18 @@ __attribute__((noreturn)) void __shutdown_program(void) {
 
 __attribute__((noreturn))
 void __rpx_start(int argc, char **argv) {
-
 	setup_os_exceptions();
 	socket_lib_init();
 	wiiu_log_init();
 	DEBUG_LINE();
-	fsdev_init();
 	memoryInitialize();
-#ifdef HAVE_LIBFAT
+	fsdev_init();
+
 	DEBUG_VAR(iosuhaxMount);
 	DEBUG_VAR(mcp_hook_fd);
-#endif
+	DEBUG_VAR2(MEM1_avail());
+	DEBUG_VAR2(MEM2_avail());
+	DEBUG_VAR2(MEMBucket_avail());
 	__init();
 	main(argc, argv);
 	__fini();

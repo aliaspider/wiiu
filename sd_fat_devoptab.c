@@ -35,27 +35,6 @@
 #define FS_ALIGNMENT            0x40
 #define FS_ALIGN(x)             (((x) + FS_ALIGNMENT - 1) & ~(FS_ALIGNMENT - 1))
 
-typedef struct __attribute__((packed))
-{
-    uint32_t flag;
-    uint32_t permission;
-    uint32_t owner_id;
-    uint32_t group_id;
-    uint32_t size;
-    uint32_t alloc_size;
-    uint64_t quota_size;
-    uint32_t ent_id;
-    uint64_t ctime;
-    uint64_t mtime;
-    uint8_t attributes[48];
-} FSStat__;
-
-typedef struct
-{
-   FSStat__ stat;
-   char name[256];
-} FSDirEntry;
-
 typedef struct _sd_fat_private_t {
     char *mount_path;
     void *pClient;
@@ -396,8 +375,8 @@ static int sd_fat_fstat_r (struct _reent *r, void* fd, struct stat *st)
     /* Zero out the stat buffer */
     memset(st, 0, sizeof(struct stat));
 
-    FSStat__ stats;
-    int result = FSGetStatFile(file->dev->pClient, file->dev->pCmd, file->fd, (FSStat*)&stats, -1);
+    FSStat stats;
+    int result = FSGetStatFile(file->dev->pClient, file->dev->pCmd, file->fd, &stats, -1);
     if(result != 0) {
         r->_errno = result;
         OSUnlockMutex(file->dev->pMutex);
@@ -411,8 +390,8 @@ static int sd_fat_fstat_r (struct _reent *r, void* fd, struct stat *st)
 
     /* Fill in the generic entry stats */
     st->st_dev = stats.ent_id;
-    st->st_uid = stats.owner_id;
-    st->st_gid = stats.group_id;
+    st->st_uid = stats.owner;
+    st->st_gid = stats.group;
     st->st_ino = stats.ent_id;
     st->st_atime = stats.mtime;
     st->st_ctime = stats.ctime;
@@ -485,9 +464,9 @@ static int sd_fat_stat_r (struct _reent *r, const char *path, struct stat *st)
         return -1;
     }
 
-    FSStat__ stats;
+    FSStat stats;
 
-    int result = FSGetStat(dev->pClient, dev->pCmd, real_path, (FSStat*)&stats, -1);
+    int result = FSGetStat(dev->pClient, dev->pCmd, real_path, &stats, -1);
 
     free(real_path);
 
@@ -498,14 +477,14 @@ static int sd_fat_stat_r (struct _reent *r, const char *path, struct stat *st)
     }
 
     /* mark root also as directory */
-    st->st_mode = ((stats.flag & 0x80000000) || (strlen(dev->mount_path) + 1 == strlen(real_path)))? S_IFDIR : S_IFREG;
+    st->st_mode = ((stats.flags & 0x80000000) || (strlen(dev->mount_path) + 1 == strlen(real_path)))? S_IFDIR : S_IFREG;
     st->st_nlink = 1;
     st->st_size = stats.size;
     st->st_blocks = (stats.size + 511) >> 9;
     /* Fill in the generic entry stats */
     st->st_dev = stats.ent_id;
-    st->st_uid = stats.owner_id;
-    st->st_gid = stats.group_id;
+    st->st_uid = stats.owner;
+    st->st_gid = stats.group;
     st->st_ino = stats.ent_id;
     st->st_atime = stats.mtime;
     st->st_ctime = stats.ctime;
@@ -813,9 +792,9 @@ static int sd_fat_dirnext_r (struct _reent *r, DIR_ITER *dirState, char *filenam
 
     OSLockMutex(dirIter->dev->pMutex);
 
-    FSDirEntry * dir_entry = malloc(sizeof(FSDirEntry));
+    FSDirectoryEntry * dir_entry = malloc(sizeof(FSDirectoryEntry));
 
-    int result = FSReadDir(dirIter->dev->pClient, dirIter->dev->pCmd, dirIter->dirHandle, (FSDirectoryEntry*)dir_entry, -1);
+    int result = FSReadDir(dirIter->dev->pClient, dirIter->dev->pCmd, dirIter->dirHandle, dir_entry, -1);
     if(result < 0)
     {
         free(dir_entry);
@@ -830,17 +809,17 @@ static int sd_fat_dirnext_r (struct _reent *r, DIR_ITER *dirState, char *filenam
     if(st)
     {
         memset(st, 0, sizeof(struct stat));
-        st->st_mode = (dir_entry->stat.flag & 0x80000000) ? S_IFDIR : S_IFREG;
+        st->st_mode = (dir_entry->info.flags & 0x80000000) ? S_IFDIR : S_IFREG;
         st->st_nlink = 1;
-        st->st_size = dir_entry->stat.size;
-        st->st_blocks = (dir_entry->stat.size + 511) >> 9;
-        st->st_dev = dir_entry->stat.ent_id;
-        st->st_uid = dir_entry->stat.owner_id;
-        st->st_gid = dir_entry->stat.group_id;
-        st->st_ino = dir_entry->stat.ent_id;
-        st->st_atime = dir_entry->stat.mtime;
-        st->st_ctime = dir_entry->stat.ctime;
-        st->st_mtime = dir_entry->stat.mtime;
+        st->st_size = dir_entry->info.size;
+        st->st_blocks = (dir_entry->info.size + 511) >> 9;
+        st->st_dev = dir_entry->info.ent_id;
+        st->st_uid = dir_entry->info.owner;
+        st->st_gid = dir_entry->info.group;
+        st->st_ino = dir_entry->info.ent_id;
+        st->st_atime = dir_entry->info.mtime;
+        st->st_ctime = dir_entry->info.ctime;
+        st->st_mtime = dir_entry->info.mtime;
     }
 
     free(dir_entry);

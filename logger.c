@@ -66,8 +66,8 @@ void net_print_exp(const char *str) {
 }
 
 void wiiu_log_init(void) {
-#if defined(PC_DEVELOPMENT_IP_ADDRESS)
 	OSInitMutex(&wiiu_log_mutex);
+#if defined(PC_DEVELOPMENT_IP_ADDRESS)
 	if (!OSIsHLE()) {		
 		wiiu_log_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 

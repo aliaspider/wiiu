@@ -125,15 +125,21 @@ typedef struct FSCmdBlock
    uint32_t __unknown[0x2A0];
 } FSCmdBlock;
 
-typedef struct FSStat
+typedef struct __attribute__((packed)) FSStat
 {
-   FSStatFlags flags;
-   FSMode mode;
-   uint32_t owner;
-   uint32_t group;
-   uint32_t size;
-   uint32_t __unknown[0x14];
+    u32 flags;
+    u32 mode;
+    u32 owner;
+    u32 group;
+    u32 size;
+    u32 alloc_size;
+    u64 quota_size;
+    u32 ent_id;
+    u64 ctime;
+    u64 mtime;
+    u8 attributes[48];
 } FSStat;
+
 
 typedef struct FSStateChangeInfo
 {

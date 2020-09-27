@@ -189,10 +189,10 @@ int __gthread_create(__gthread_t *_thread, void *(*func)(void *), void *args) {
 	}
 
 	OSSetThreadDeallocator(thread, thread_deallocator);
-	;
+//	OSSetThreadRunQuantum(thread, 100);
 
-	OSResumeThread(thread);
 	*_thread = thread;
+	OSResumeThread(thread);
 
 	return 0;
 }
@@ -236,10 +236,64 @@ int __gthread_cond_signal(__gthread_cond_t *cond) {
 	return 0;
 }
 
+#if 1
 int __gthread_cond_timedwait(__gthread_cond_t *cond, __gthread_mutex_t *mutex, const __gthread_time_t *abs_timeout) {
 	OSWaitCond((OSCondition *)cond, (OSMutex *)mutex);
 	return 0;
 }
+#else
+struct __wut_cond_timedwait_data_t
+{
+   OSCondition *cond;
+   bool timed_out;
+};
+
+#include <chrono>
+#include <wiiu/os/alarm.h>
+static void
+__wut_cond_timedwait_alarm_callback(OSAlarm *alarm,
+                                    OSContext *context)
+{
+   __wut_cond_timedwait_data_t *data = (__wut_cond_timedwait_data_t *)OSGetAlarmUserData(alarm);
+   data->timed_out = true;
+   OSSignalCond(data->cond);
+}
+int
+__gthread_cond_timedwait(OSCondition *cond, OSMutex *mutex,
+                     const __gthread_time_t *abs_timeout)
+{
+	DEBUG_LINE();
+   __wut_cond_timedwait_data_t data;
+   data.timed_out = false;
+   data.cond = cond;
+
+   auto time = std::chrono::system_clock::now();
+   auto timeout = std::chrono::system_clock::time_point(
+      std::chrono::seconds(abs_timeout->tv_sec) +
+      std::chrono::nanoseconds(abs_timeout->tv_nsec));
+
+   // Already timed out!
+   if (timeout <= time) {
+      return ETIMEDOUT;
+   }
+
+   auto duration =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(timeout - time);
+
+   // Set an alarm
+   OSAlarm alarm;
+   OSCreateAlarm(&alarm);
+   OSSetAlarmUserData(&alarm, &data);
+   OSSetAlarm(&alarm, OSNanoseconds(duration.count()),
+              &__wut_cond_timedwait_alarm_callback);
+
+   // Wait on the condition
+   OSWaitCond(cond, mutex);
+
+   OSCancelAlarm(&alarm);
+   return data.timed_out ? ETIMEDOUT : 0;
+}
+#endif
 
 int __gthread_active_p(void) {
 	return 1;

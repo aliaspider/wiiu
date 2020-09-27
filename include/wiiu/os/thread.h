@@ -77,7 +77,10 @@ typedef struct OSContext
    uint32_t xer;
    uint32_t srr0;
    uint32_t srr1;
-   uint32_t __unknown[0x5];
+   uint32_t exception_specific0;
+   uint32_t exception_specific1;
+   uint32_t crash_exception_type;
+   uint32_t __unknown[0x2];
    uint32_t fpscr;
    double fpr[32];
    uint16_t spinLockCount;

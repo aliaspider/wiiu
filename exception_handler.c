@@ -34,9 +34,10 @@
 /*	Externals
 	From the linker scripts.
 */
-extern unsigned int __code_start;
+__attribute__((section(".text"))) extern void* __code_start;
+__attribute__((section(".text"))) extern void* __code_end;
+
 #define TEXT_START (unsigned int)&__code_start
-extern unsigned int __code_end;
 #define TEXT_END (unsigned int)&__code_end
 
 void test_os_exceptions(void);
@@ -48,12 +49,8 @@ typedef struct _framerec
    void* lr;
 } frame_rec, *frame_rec_t;
 
-/*	Fill in a few gaps in thread.h
-	Dimok calls these exception_specific0 and 1;
-	though we may as well name them by their function.
-*/
-#define dsisr __unknown[0]
-#define dar __unknown[1]
+#define dsisr exception_specific0
+#define dar exception_specific1
 
 /*	Some bitmasks for determining DSI causes.
 	Taken from the PowerPC Programming Environments Manual (32-bit).
@@ -100,11 +97,15 @@ static void disasm_printfcallback(const char* fmt, ...)
 
 static void print_and_abort()
 {
+   DEBUG_LINE();
 //   GX2ResetGPU();
    puts(exception_msgbuf);
+   DEBUG_STR(OSGetThreadName(OSGetCurrentThread()));
    DEBUG_VAR(MEM2_avail());
 #if 1
    OSScreenInit();
+   GX2SetTVEnable(GX2_ENABLE);
+	GX2SetDRCEnable(GX2_ENABLE);
 
    int lines = 1;
    int i;
@@ -246,23 +247,22 @@ BOOL exception_cb(OSContext* ctx, OSExceptionType type, OSExceptionCallbackFn pr
       There's space for two more regs at the end of the last line...
       Any ideas for what to put there? */
    buf_add( \
-         "   r0  %08" PRIX32 " r1  %08" PRIX32 " r2  %08" PRIX32 " r3  %08" PRIX32 " r4  %08" PRIX32 "\n" \
-         "   r5  %08" PRIX32 " r6  %08" PRIX32 " r7  %08" PRIX32 " r8  %08" PRIX32 " r9  %08" PRIX32 "\n" \
-         "   r10 %08" PRIX32 " r11 %08" PRIX32 " r12 %08" PRIX32 " r13 %08" PRIX32 " r14 %08" PRIX32 "\n" \
-         "   r15 %08" PRIX32 " r16 %08" PRIX32 " r17 %08" PRIX32 " r18 %08" PRIX32 " r19 %08" PRIX32 "\n" \
-         "   r20 %08" PRIX32 " r21 %08" PRIX32 " r22 %08" PRIX32 " r23 %08" PRIX32 " r24 %08" PRIX32 "\n" \
-         "   r25 %08" PRIX32 " r26 %08" PRIX32 " r27 %08" PRIX32 " r28 %08" PRIX32 " r29 %08" PRIX32 "\n" \
-         "   r30 %08" PRIX32 " r31 %08" PRIX32 " lr  %08" PRIX32 " sr1 %08" PRIX32 " dsi %08" PRIX32 "\n" \
-         "   ctr %08" PRIX32 " cr  %08" PRIX32 " xer %08" PRIX32 "\n",\
-         ctx->gpr[0],  ctx->gpr[1],  ctx->gpr[2],  ctx->gpr[3],  ctx->gpr[4],  \
-         ctx->gpr[5],  ctx->gpr[6],  ctx->gpr[7],  ctx->gpr[8],  ctx->gpr[9],  \
-         ctx->gpr[10], ctx->gpr[11], ctx->gpr[12], ctx->gpr[13], ctx->gpr[14], \
-         ctx->gpr[15], ctx->gpr[16], ctx->gpr[17], ctx->gpr[18], ctx->gpr[19], \
-         ctx->gpr[20], ctx->gpr[21], ctx->gpr[22], ctx->gpr[23], ctx->gpr[24], \
-         ctx->gpr[25], ctx->gpr[26], ctx->gpr[27], ctx->gpr[28], ctx->gpr[29], \
-         ctx->gpr[30], ctx->gpr[31], ctx->lr,      ctx->srr1,    ctx->dsisr,   \
-         ctx->ctr,     ctx->cr,      ctx->xer                                  \
-         );
+         "   r0  %08X r1  %08X r2  %08X r3  %08X r4  %08X\n"
+         "   r5  %08X r6  %08X r7  %08X r8  %08X r9  %08X\n"
+         "   r10 %08X r11 %08X r12 %08X r13 %08X r14 %08X\n"
+         "   r15 %08X r16 %08X r17 %08X r18 %08X r19 %08X\n"
+         "   r20 %08X r21 %08X r22 %08X r23 %08X r24 %08X\n"
+         "   r25 %08X r26 %08X r27 %08X r28 %08X r29 %08X\n"
+         "   r30 %08X r31 %08X lr  %08X sr1 %08X dsi %08X\n"
+         "   ctr %08X cr  %08X xer %08X %25s\n",
+         ctx->gpr[0],  ctx->gpr[1],  ctx->gpr[2],  ctx->gpr[3],  ctx->gpr[4],
+         ctx->gpr[5],  ctx->gpr[6],  ctx->gpr[7],  ctx->gpr[8],  ctx->gpr[9],
+         ctx->gpr[10], ctx->gpr[11], ctx->gpr[12], ctx->gpr[13], ctx->gpr[14],
+         ctx->gpr[15], ctx->gpr[16], ctx->gpr[17], ctx->gpr[18], ctx->gpr[19],
+         ctx->gpr[20], ctx->gpr[21], ctx->gpr[22], ctx->gpr[23], ctx->gpr[24],
+         ctx->gpr[25], ctx->gpr[26], ctx->gpr[27], ctx->gpr[28], ctx->gpr[29],
+         ctx->gpr[30], ctx->gpr[31], ctx->lr,      ctx->srr1,    ctx->dsisr,
+         ctx->ctr,     ctx->cr,      ctx->xer, OSGetThreadName(OSGetCurrentThread()));
 
    buf_add("   ");
    DisassemblePPCRange((void*)ctx->srr0, (void*)ctx->srr0, (void*)disasm_printfcallback, (void*)OSGetSymbolNameEx, 0);
@@ -287,8 +287,9 @@ BOOL exception_cb(OSContext* ctx, OSExceptionType type, OSExceptionCallbackFn pr
       buf_add("Stack pointer invalid. Could not trace further.\n");
 
    buf_add("MEM: 0x%08X/0x%08X/0x%08X\n", MEM1_avail(), MEM2_avail(), MEMBucket_avail());
-   extern const char *PPSSPP_GIT_VERSION;
-   buf_add("PPSSPP (%s)\n", PPSSPP_GIT_VERSION);
+   extern const char *PROGRAM_NAME;
+   extern const char *PROGRAM_VERSION;
+   buf_add("%s (%s)\n", PROGRAM_NAME, PROGRAM_VERSION);
 
    for (; i < VISIBLE_STACK_TRACE_LINES + 3; i++)
       buf_add("\n");
@@ -311,7 +312,7 @@ BOOL exception_cb(OSContext* ctx, OSExceptionType type, OSExceptionCallbackFn pr
    else if (!(ctx->dsisr & DSISR_DABR_MATCH))
       ctx->srr0 = (u32)print_and_abort;
 
-   if(!prev_cb || prev_cb(ctx))
+   if (!prev_cb || prev_cb(ctx))
       return TRUE;
 
    OSFatal(exception_msgbuf);
@@ -320,6 +321,7 @@ BOOL exception_cb(OSContext* ctx, OSExceptionType type, OSExceptionCallbackFn pr
 static OSExceptionCallbackFn previous_dsi_cb;
 static OSExceptionCallbackFn previous_isi_cb;
 static OSExceptionCallbackFn previous_prog_cb;
+static OSExceptionCallbackFn previous_br_cb;
 
 BOOL exception_dsi_cb(OSContext* ctx)
 {
@@ -334,6 +336,11 @@ BOOL exception_isi_cb(OSContext* ctx)
 BOOL exception_prog_cb(OSContext* ctx)
 {
 	return exception_cb(ctx, OS_EXCEPTION_TYPE_PROGRAM, previous_prog_cb);
+}
+
+BOOL exception_br_cb(OSContext* ctx)
+{
+	return exception_cb(ctx, OS_EXCEPTION_TYPE_BREAKPOINT, previous_br_cb);
 }
 
 void exception_print_symbol(uint32_t addr)
@@ -414,9 +421,10 @@ void setup_os_exceptions(void)
 {
    exception_msgbuf = malloc(4096* 8);
    *exception_msgbuf = '\0';
-   previous_dsi_cb = OSSetExceptionCallback(OS_EXCEPTION_TYPE_DSI, exception_dsi_cb);
-   previous_isi_cb = OSSetExceptionCallback(OS_EXCEPTION_TYPE_ISI, exception_isi_cb);
-   previous_prog_cb = OSSetExceptionCallback(OS_EXCEPTION_TYPE_PROGRAM, exception_prog_cb);
+   previous_dsi_cb = OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_DSI, exception_dsi_cb);
+   previous_isi_cb = OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_ISI, exception_isi_cb);
+   previous_prog_cb = OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_PROGRAM, exception_prog_cb);
+   previous_br_cb = OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_BREAKPOINT, exception_br_cb);
    test_os_exceptions();
 }
 
@@ -426,9 +434,10 @@ void deinit_os_exceptions(void)
       print_and_abort();
    free(exception_msgbuf);
    exception_msgbuf = NULL;
-   OSSetExceptionCallback(OS_EXCEPTION_TYPE_DSI, previous_dsi_cb);
-   OSSetExceptionCallback(OS_EXCEPTION_TYPE_ISI, previous_isi_cb);
-   OSSetExceptionCallback(OS_EXCEPTION_TYPE_PROGRAM, previous_prog_cb);
+   OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_DSI, previous_dsi_cb);
+   OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_ISI, previous_isi_cb);
+   OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_PROGRAM, previous_prog_cb);
+   OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_BREAKPOINT, previous_br_cb);
 }
 
 /*	void test_os_exceptions(void)
