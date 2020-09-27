@@ -1,0 +1,7 @@
+#define FIMPORT_BEGIN(lib) .fimport_##lib ALIGN(64) : { *(.fimport_##lib*) } > load
+#define FIMPORT(func)
+
+#define DIMPORT_BEGIN(lib) .dimport_##lib ALIGN(64) : { *(.dimport_##lib*) } > load
+#define DIMPORT(func)
+
+#include "imports.h"

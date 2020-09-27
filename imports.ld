@@ -1,0 +1,9 @@
+.fimport_coreinit ALIGN(64) : { *(.fimport_coreinit*) } > load
+.fimport_nsysnet ALIGN(64) : { *(.fimport_nsysnet*) } > load
+.fimport_gx2 ALIGN(64) : { *(.fimport_gx2*) } > load
+.fimport_proc_ui ALIGN(64) : { *(.fimport_proc_ui*) } > load
+.fimport_sndcore2 ALIGN(64) : { *(.fimport_sndcore2*) } > load
+.fimport_sysapp ALIGN(64) : { *(.fimport_sysapp*) } > load
+.fimport_vpad ALIGN(64) : { *(.fimport_vpad*) } > load
+.fimport_padscore ALIGN(64) : { *(.fimport_padscore*) } > load
+.fimport_nsyskbd ALIGN(64) : { *(.fimport_nsyskbd*) } > load
