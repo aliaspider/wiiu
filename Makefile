@@ -6,7 +6,6 @@ WIIU_DIR = .
 OBJ := 
 OBJ += test.o
 
-
 ifeq ($(DEBUG),1)
    BUILD_DIR := $(BUILD_DIR)-debug
 endif
@@ -54,14 +53,11 @@ DEFINES += -D__wiiu__ -DHW_WUP -D__powerpc__ -DWORDS_BIGENDIAN -DFD_SETSIZE=32
 
 INCDIRS += -isystem$(WIIU_DIR) -Iinclude
 
-CFLAGS  := -mcpu=750 -meabi -mhard-float
+CFLAGS  := -mcpu=750 -meabi -msdata=eabi -mhard-float
 CFLAGS  += -ffunction-sections -fdata-sections
-CFLAGS  += -msdata=eabi
-#CFLAGS  += -fno-builtin -ffreestanding -fno-jump-tables
-#CFLAGS  += -mno-sdata
-#CFLAGS  += -ftls-model=global-dynamic 
-#CFLAGS  += -ftls-model=local-dynamic
-#CFLAGS  += -Wall -Werror
+CFLAGS  += -ftls-model=global-dynamic
+#CFLAGS  += -Werror
+#CFLAGS  += -Wall
 
 ifeq ($(DEBUG), 1)
    CFLAGS  += -O0 -g
@@ -74,16 +70,11 @@ ASFLAGS := $(CFLAGS) -mregnames -Wa,--sectname-subst
 CXXFLAGS := $(CFLAGS) -std=c++17
 
 
-LIBDIRS := -L. -L$(BUILD_DIR)
+LIBDIRS := -L$(BUILD_DIR)
 LIBS := 
 LDFLAGS := $(CFLAGS) 
-#LDFLAGS += -z common-page-size=0x20000 -z max-page-size=0x20000 
-LDFLAGS += -z common-page-size=64 -z max-page-size=64
-LDFLAGS += -nostartfiles
-LDFLAGS += -z nocopyreloc
-LDFLAGS += -Wl,--gc-sections 
-LDFLAGS += -Wl,--emit-relocs 
-LDFLAGS += -Wl,--no-tls-optimize
+LDFLAGS += -z common-page-size=64 -z max-page-size=64 -z nocopyreloc -nostartfiles
+LDFLAGS += -Wl,--emit-relocs,--no-tls-optimize,--gc-sections
 LDFLAGS += -T link.ld
 
 PREFIX := $(DEVKITPPC)/bin/powerpc-eabi-
@@ -109,32 +100,32 @@ rpltool:
 %: $(BUILD_DIR)/%
 	cp $< $@
 
-$(BUILD_DIR)/%.o: %.cpp %.depend
+$(BUILD_DIR)/%.o: %.cpp %.depend Makefile 
 	@$(if $(Q), echo CXX $<,)
 	@mkdir -p $(dir $@)
 	$(Q)$(CXX) -c -o $@ $< $(CXXFLAGS) $(DEFINES) $(INCDIRS) $(DEPFLAGS)
 
-$(BUILD_DIR)/%.o: %.cc %.depend
+$(BUILD_DIR)/%.o: %.cc %.depend Makefile 
 	@$(if $(Q), echo CXX $<,)
 	@mkdir -p $(dir $@)
 	$(Q)$(CXX) -c -o $@ $< $(CXXFLAGS) $(DEFINES) $(INCDIRS) $(DEPFLAGS)
 
-$(BUILD_DIR)/%.o: %.c %.depend
+$(BUILD_DIR)/%.o: %.c %.depend Makefile 
 	@$(if $(Q), echo CC $<,)
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) -c -o $@ $< $(CFLAGS) $(DEFINES) $(INCDIRS) $(DEPFLAGS)
 
-$(BUILD_DIR)/%.o: %.S %.depend
+$(BUILD_DIR)/%.o: %.S %.depend Makefile 
 	@$(if $(Q), echo AS $<,)
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) -c -o $@ $< $(ASFLAGS) $(DEFINES) $(INCDIRS) $(DEPFLAGS)
 
-$(BUILD_DIR)/%.o: %.s %.depend
+$(BUILD_DIR)/%.o: %.s %.depend Makefile 
 	@$(if $(Q), echo AS $<,)
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) -c -o $@ $< $(ASFLAGS) $(INCDIRS) $(DEPFLAGS)
 
-$(BUILD_DIR)/%.ld: $(WIIU_DIR)/%.ldi %.depend
+$(BUILD_DIR)/%.ld: $(WIIU_DIR)/%.ldi %.depend Makefile 
 	$(CPP) -P $(INCDIRS) $(DEPFLAGS) $< | grep . > $@
 
 $(BUILD_DIR)/$(TARGET).elf: $(OBJ) $(BUILD_DIR)/imports.ld .$(TARGET).last
@@ -142,9 +133,9 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJ) $(BUILD_DIR)/imports.ld .$(TARGET).last
 	@touch .$(TARGET).last
 	$(Q)$(LD) $(OBJ) $(LDFLAGS) $(LIBDIRS) $(LIBS) -o $@
 
-$(TARGET).rpx: $(TARGET).elf $(RPLTOOL)
+$(TARGET).rpx: $(TARGET).elf $(RPLTOOL) 
 	@$(if $(Q), echo rpltool $@,)
-	$(RPLTOOL) $(BUILD_DIR)/$(TARGET).elf -S -p -o $@
+	$(RPLTOOL) $(TARGET).elf -S -p -o $@
 
 clean:
 	@$(if $(Q), echo $@,)

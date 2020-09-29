@@ -7,11 +7,11 @@
 #include "rpl.h"
 #include "table.h"
 
-void elf_print_header(elf_t *elf) {
+void elf_print_header(Elf *elf) {
    log_magic(elf->header.magic);
-   log_enum(elf_class, elf->header.elf_class);
-   log_enum(elf_data_encoding, elf->header.data_encoding);
-   log_enum(elf_version, elf->header.elf_version);
+   log_enum(ElfClass, elf->header.elf_class);
+   log_enum(ElfDataEncoding, elf->header.data_encoding);
+   log_enum(ElfVersion, elf->header.elf_version);
    log_carray(elf->header.os_abi);
    log_var(elf->header.type);
    log_var(elf->header.machine);
@@ -28,9 +28,9 @@ void elf_print_header(elf_t *elf) {
    log_var(elf->header.shstrndx);
 }
 
-void elf_print_sections(elf_t *elf) {
+void elf_print_sections(Elf *elf) {
    bool compressed = false;
-   section_t *section = elf->sections;
+   Section *section = elf->sections;
    while (section = section->next)
       if (section->header.flags & SHF_RPL_ZLIB)
          compressed = true;
@@ -55,8 +55,8 @@ void elf_print_sections(elf_t *elf) {
    section = elf->sections;
    while (section = section->next) {
       compressed = (section->header.flags & SHF_RPL_ZLIB);
-      table_add_row(table, get_sid(section), section->name, section_type_to_str(section->header.type),
-                    section_flags_to_str(section->header.flags, ", "), section->header.addr, section->header.offset,
+      table_add_row(table, get_sid(section), section->name, SectionType_to_str(section->header.type),
+                    SectionFlags_to_str(section->header.flags, ", "), section->header.addr, section->header.offset,
                     section->header.size, section->header.link, section->header.info,
                     (unsigned)log2(section->header.addralign), section->header.entsize);
    }
@@ -80,11 +80,10 @@ void elf_print_strtab(const char *strtab) {
       ptr += printf("%s\n", ptr);
 }
 
-void elf_print_file_info(fileinfo_t *info) {
+void elf_print_file_info(FileInfo *info) {
    log_var(info->magic);
    log_var(info->version);
    log_var(info->RegBytes.Text);
-   //   return;
    log_var(info->RegBytes.TextAlign);
    log_var(info->RegBytes.Data);
    log_var(info->RegBytes.DataAlign);
@@ -97,21 +96,25 @@ void elf_print_file_info(fileinfo_t *info) {
    log_var(info->SizeCoreStacks);
    if (info->TagsOffset)
       log_off_str(info->SrcFileNameOffset, info);
+   else
+      log_var(info->SrcFileNameOffset);
    if (info->version >= 0x0401) {
-      log_var(info->Flags);
+      log_flags(FileInfoFlags, info->Flags);
       log_var(info->SysHeapBytes);
       if (info->TagsOffset)
-         log_off_str(info->TagsOffset, info);
+         log_off_strs(info->TagsOffset, info);
+      else
+         log_var(info->TagsOffset);
    }
    if (info->version >= 0x0402) {
       log_var(info->minVersion);
-      log_var(info->compressionLevel);
+      log_svar(info->compressionLevel);
       log_var(info->trampAddition);
       log_var(info->fileInfoPad);
       log_var(info->cafeSdkVersion);
       log_var(info->cafeSdkRevision);
       log_var(info->tlsModuleIndex);
       log_var(info->tlsAlignShift);
-      log_var(sizeof(fileinfo_t));
+      log_var(info->runtimeFileInfoSize);
    }
 }

@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
    if (!opts->filename)
       return 0;
 
-   elf_t *elf = read_elf(opts->filename);
+   Elf *elf = read_elf(opts->filename);
 
    if (opts->display_header)
       elf_print_header(elf);

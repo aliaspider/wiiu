@@ -31,6 +31,7 @@
    ENUM_VAL(SHF_, GROUP, 1u << 9) \
    ENUM_VAL(SHF_, TLS, 1u << 10) \
    ENUM_VAL(SHF_, COMPRESSED, 1u << 11) \
+   ENUM_VAL(SHF_, RPL_TLS, 1u << 26) \
    ENUM_VAL(SHF_, RPL_ZLIB, 1u << 27) \
    ENUM_VAL(SHF_, ORDERED, 1u << 30) \
    ENUM_VAL(SHF_, EXCLUDE, 1u << 31)
@@ -115,28 +116,40 @@
    ENUM_VAL(R_, PPC_GHS_REL16_HI, 252) \
    ENUM_VAL(R_, PPC_GHS_REL16_LO, 253)
 
+#define FILE_INFO_FLAGS_LIST \
+   ENUM_VAL(FIF_, NONE, 0) \
+   ENUM_VAL(FIF_, RPX, 1u << 1) \
+   ENUM_VAL(FIF_, TLS, 1u << 3)
+
+
 #undef ENUM_VAL
 #define ENUM_VAL(prefix, name, val) prefix##name = val,
 
-typedef enum { SECTION_TYPE_LIST } section_type;
-typedef enum { SECTION_FLAGS_LIST } section_flags;
-typedef enum { ELF_CLASS_LIST } elf_class;
-typedef enum { ELF_DATAENCODING_LIST } elf_data_encoding;
-typedef enum { ELF_VERSION_LIST } elf_version;
-typedef enum { ELF_RELOCATION_LIST } elf_relocation;
+typedef enum { SECTION_TYPE_LIST } SectionType;
+typedef enum { SECTION_FLAGS_LIST } SectionFlags;
+typedef enum { ELF_CLASS_LIST } ElfClass;
+typedef enum { ELF_DATAENCODING_LIST } ElfDataEncoding;
+typedef enum { ELF_VERSION_LIST } ElfVersion;
+typedef enum { ELF_RELOCATION_LIST } ElfRelocation;
+typedef enum { FILE_INFO_FLAGS_LIST } FileInfoFlags;
 #undef ENUM_VAL
 #define ENUM_VAL GET_ENUM_NAME
 
-EMIT_ENUM_TO_STR_FUNC(section_type, SECTION_TYPE_LIST)
-EMIT_ENUM_TO_STR_FUNC(elf_class, ELF_CLASS_LIST)
-EMIT_ENUM_TO_STR_FUNC(elf_data_encoding, ELF_DATAENCODING_LIST)
-EMIT_ENUM_TO_STR_FUNC(elf_version, ELF_VERSION_LIST)
-EMIT_ENUM_TO_STR_FUNC(elf_relocation, ELF_RELOCATION_LIST)
+EMIT_ENUM_TO_STR_FUNC(SectionType, SECTION_TYPE_LIST)
+EMIT_ENUM_TO_STR_FUNC(ElfClass, ELF_CLASS_LIST)
+EMIT_ENUM_TO_STR_FUNC(ElfDataEncoding, ELF_DATAENCODING_LIST)
+EMIT_ENUM_TO_STR_FUNC(ElfVersion, ELF_VERSION_LIST)
+EMIT_ENUM_TO_STR_FUNC(ElfRelocation, ELF_RELOCATION_LIST)
 
 #undef ENUM_VAL
 #define ENUM_VAL GET_FLAG_NAME
 
-EMIT_FLAGS_TO_STR_FUNC(section_flags, SECTION_FLAGS_LIST)
+EMIT_FLAGS_TO_STR_FUNC(SectionFlags, SECTION_FLAGS_LIST)
+EMIT_FLAGS_TO_STR_FUNC(FileInfoFlags, FILE_INFO_FLAGS_LIST)
+
+#define ELF_MAGIC MAKE_MAGIC(0x7f, 'E', 'L', 'F')
+#define ET_CAFE 0xFE01
+#define EM_PPC 0x14
 
 #pragma scalar_storage_order big - endian
 
@@ -144,10 +157,14 @@ typedef struct {
    u32 val;
 } u32_be;
 
+typedef struct {
+   s16 val;
+} s16_be;
+
 #define FI_IS_RPL 0
 #define FI_IS_RPX 2
 
-typedef struct fileinfo_t {
+typedef struct FileInfo {
    u16 magic;
    u16 version;
    struct {
@@ -175,112 +192,111 @@ typedef struct fileinfo_t {
    u32 fileInfoPad;
    u32 cafeSdkVersion;
    u32 cafeSdkRevision;
-   u32 tlsModuleIndex;
-   u32 tlsAlignShift;
+   u16 tlsModuleIndex;
+   u16 tlsAlignShift;
+   u32 runtimeFileInfoSize;
    // version 0x0402
-} fileinfo_t;
+} FileInfo;
 
-typedef struct section_header_t {
-   u32 name;      /* Section name (string tbl index) */
-   u32 type;      /* Section type */
-   u32 flags;     /* Section flags */
-   u32 addr;      /* Section virtual addr at execution */
-   u32 offset;    /* Section file offset */
-   u32 size;      /* Section size in bytes */
-   u32 link;      /* Link to another section */
-   u32 info;      /* Additional section information */
-   u32 addralign; /* Section alignment */
-   u32 entsize;   /* Entry size if section holds table */
-} section_header_t;
+typedef struct SectionHeader {
+   u32 name;
+   u32 type;
+   u32 flags;
+   u32 addr;
+   u32 offset;
+   u32 size;
+   u32 link;
+   u32 info;
+   u32 addralign;
+   u32 entsize;
+} SectionHeader;
 
 typedef struct {
    u32 deflated_size;
    u8 compressed_data[];
-} compressed_data_t;
+} CompressedData;
 
-#define ELF_MAGIC 0x7F454C46
-typedef struct elf_header_t {
+typedef struct ElfHeader {
    u32 magic;
    u8 elf_class;
    u8 data_encoding;
    u8 elf_version;
-   u8 os_abi[9];
-   u16 type;      /* Object file type */
-   u16 machine;   /* Architecture */
-   u32 version;   /* Object file version */
-   u32 entry;     /* Entry point virtual address */
-   u32 phoff;     /* Program header table file offset */
-   u32 shoff;     /* Section header table file offset */
-   u32 flags;     /* Processor-specific flags */
-   u16 ehsize;    /* ELF header size in bytes */
-   u16 phentsize; /* Program header table entry size */
-   u16 phnum;     /* Program header table entry count */
-   u16 shentsize; /* Section header table entry size */
-   u16 shnum;     /* Section header table entry count */
-   u16 shstrndx;  /* Section header string table index */
-} elf_header_t;
+   u8 os_abi[2];
+   u8 pad[7];
+   u16 type;
+   u16 machine;
+   u32 version;
+   u32 entry;
+   u32 phoff;
+   u32 shoff;
+   u32 flags;
+   u16 ehsize;
+   u16 phentsize;
+   u16 phnum;
+   u16 shentsize;
+   u16 shnum;
+   u16 shstrndx;
+} ElfHeader;
 
 /* Symbol table entry.  */
 
 typedef struct {
-   u32 name;     /* Symbol name (string tbl index) */
-   u32 value;    /* Symbol value */
-   u32 size;     /* Symbol size */
-   u8 info; /* Symbol type and binding */
-   u8 other;     /* Symbol visibility */
-   u16 shndx;    /* Section index */
-} symbol_t;
-
-/* Relocation table entry with addend (in section of type SHT_RELA).  */
+   u32 name;
+   u32 value;
+   u32 size;
+   u8 info;
+   u8 other;
+   u16 shndx;
+} Symbol;
 
 typedef struct {
-   u32 offset; /* Address */
+   u32 offset;
    struct {
-      u32 index : 24; /* symbol index */
-      u32 type : 8;   /* Relocation type */
+      u32 index : 24;
+      u32 type : 8;
    };
-   s32 addend; /* Addend */
-} relocation_t;
+   s32 addend;
+} Relocation;
 
 #pragma scalar_storage_order default
 
-typedef struct section_t {
-   section_header_t header;
-   struct section_t *prev;
-   struct section_t *next;
-   struct section_t *link;
-   struct section_t *link2;
-   const char* name;
+typedef struct Section {
+   SectionHeader header;
+   struct Section *prev;
+   struct Section *next;
+   struct Section *link;
+   struct Section *link2;
+   const char *name;
    void *data;
-} section_t;
+} Section;
 
 typedef struct {
-   elf_header_t header;
-   fileinfo_t *info;
-   section_t* sections;
+   ElfHeader header;
+   FileInfo *info;
+   Section *sections;
    const char *shstrtab;
    const char *strtab;
    u32_be *crcs;
    bool is_rpl;
-} elf_t;
+} Elf;
 
-void elf_print_header(elf_t *elf);
-void elf_print_sections(elf_t *elf);
+void elf_print_header(Elf *elf);
+void elf_print_sections(Elf *elf);
 void elf_print_strtab(const char *strtab);
-void elf_print_file_info(fileinfo_t *info);
-elf_t *read_elf(const char *filename);
-void write_elf(elf_t *elf, const char *filename, bool plain);
-void free_elf(elf_t *elf);
+void elf_print_file_info(FileInfo *info);
+Elf *read_elf(const char *filename);
+void write_elf(Elf *elf, const char *filename, bool plain);
+void free_elf(Elf *elf);
 
-static inline int get_sid(section_t *s) {
+static inline int get_sid(Section *s) {
    int id = 0;
    while (s = s->prev)
       id++;
    return id;
 }
 
-static inline int get_section_count(elf_t *elf) {
-   section_t *s = elf->sections;
+static inline int get_section_count(Elf *elf) {
+   Section *s = elf->sections;
 
    int count = 0;
    do
@@ -289,16 +305,16 @@ static inline int get_section_count(elf_t *elf) {
    return count;
 }
 
-static inline section_t *get_section(elf_t *elf, int id) {
-   section_t *s = elf->sections;
+static inline Section *get_section(Elf *elf, int id) {
+   Section *s = elf->sections;
    while (id--)
       if (s)
          s = s->next;
    return s;
 }
 
-static inline section_t *get_section_by_name(elf_t *elf, const char *name) {
-   section_t *s = elf->sections;
+static inline Section *get_section_by_name(Elf *elf, const char *name) {
+   Section *s = elf->sections;
    while (s = s->next)
       if (!strcmp(s->name, name))
          return s;

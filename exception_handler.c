@@ -34,8 +34,9 @@
 /*	Externals
 	From the linker scripts.
 */
-__attribute__((section(".text"))) extern void* __code_start;
-__attribute__((section(".text"))) extern void* __code_end;
+
+void __code_start();
+void __code_end();
 
 #define TEXT_START (unsigned int)&__code_start
 #define TEXT_END (unsigned int)&__code_end

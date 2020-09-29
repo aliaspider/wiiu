@@ -46,16 +46,27 @@ typedef uint32_t u32;
       return buffer; \
    }
 
+#define MAKE_MAGIC(a, b, c, d) (((a) << 24) | ((b) << 16) | ((c) << 8) | ((d) << 0))
+
 #define log_var(X) printf("%-35s: 0x%0*X (%u)\n", #X, sizeof(X) * 2, (u32)(X), (u32)(X))
 #define log_svar(X) printf("%-35s: 0x%0*X (%i)\n", #X, sizeof(X) * 2, (u32)(X), (s32)(X))
 #define log_array(X) debug_array(X, sizeof(X), #X)
 #define log_enum(type, X) printf("%-35s: 0x%X (%s)\n", #X, (X), type##_to_str(X))
-#define DEBUG_FLAGS(type, X) printf("%-35s: 0x%08X (%s)\n", #X, (X), type##_to_str(X, " | "))
+#define log_flags(type, X) printf("%-35s: 0x%08X (%s)\n", #X, (X), type##_to_str(X, " | "))
 #define log_magic(X) \
    printf("%-35s: '%c''%c''%c''%c' (0x%08X)\n", #X, (u32)(X) >> 24, (u32)(X) >> 16, (u32)(X) >> 8, (u32)(X), (u32)(X))
 #define log_carray(X) debug_char_array(X, sizeof(X), #X)
 #define log_str(X) printf("%-35s: \"%s\"\n", #X, (char *)(X))
 #define log_off_str(X, data) printf("%-35s: 0x%08X \"%s\"\n", #X, (X), (char *)data + (X))
+#define log_off_strs(X, data) \
+   do { \
+      printf("%-35s: 0x%08X ", #X, (X)); \
+      const char *ptr = (char *)data + (X); \
+      while (*ptr) { \
+         ptr += printf("\"%s\" ", ptr) - 2; \
+      } \
+      printf("\n"); \
+   } while (0)
 
 static inline void dump_array(uint32_t *src, int size);
 static inline void debug_array(uint32_t *src, int size, const char *name) {
@@ -91,6 +102,6 @@ static inline void dump_array(uint32_t *src, int size) {
 }
 
 static inline u32 align_up(u32 x, u32 align) { return (x + (align - 1)) & ~(align - 1); }
-static inline u32 align_down(u32 x, u32 align) { return x  & ~(align - 1); }
+static inline u32 align_down(u32 x, u32 align) { return x & ~(align - 1); }
 
 #endif // COMMON_H

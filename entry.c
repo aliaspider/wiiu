@@ -21,20 +21,20 @@ int main(int argc, char **argv);
 
 void __eabi(void) {}
 
-__attribute__((section(".ctor"))) extern void (*const __CTOR_LIST__)(void);
-__attribute__((section(".ctor"))) extern void (*const __CTOR_END__)(void);
-__attribute__((section(".dtor"))) extern void (*const __DTOR_LIST__)(void);
-__attribute__((section(".dtor"))) extern void (*const __DTOR_END__)(void);
+extern void (*const __CTOR_LIST__[])(void);
+extern void (*const __CTOR_END__[])(void);
+extern void (*const __DTOR_LIST__[])(void);
+extern void (*const __DTOR_END__[])(void);
 
 void __init(void) {
-	void (*const *ctor)(void) = &__CTOR_LIST__;
-	while (ctor < &__CTOR_END__)
+	void (*const *ctor)(void) = __CTOR_LIST__;
+	while (ctor < __CTOR_END__)
 		(*ctor++)();
 }
 
 void __fini(void) {
-	void (*const *dtor)(void) = &__DTOR_LIST__;
-	while (dtor < &__DTOR_END__)
+	void (*const *dtor)(void) = __DTOR_LIST__;
+	while (dtor < __DTOR_END__)
 		(*dtor++)();
 }
 

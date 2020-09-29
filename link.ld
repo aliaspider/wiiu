@@ -22,6 +22,11 @@ SECTIONS
       *(.text.*)
       *(.gnu.warning)
       *(.gnu.linkonce.t.*)
+      *(.got)
+      *(.got1)
+      *(.got2)
+      *(.got.plt)
+      *(.plt)
       . = ALIGN(4);
       __code_end = .;
    } > code
@@ -47,11 +52,6 @@ SECTIONS
       *(.fixup)
       *(.gcc_except_table)
       *(.gcc_except_table.*)
-      *(.got)
-      *(.got1)
-      *(.got2)
-      *(.got.plt)
-      *(.plt)
       *(.tm_clone_table)
    } > data
 
