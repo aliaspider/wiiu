@@ -45,22 +45,6 @@ int main(int argc, char **argv) {
 
    Elf *elf = read_elf(opts->filename);
 
-   if (opts->display_header)
-      elf_print_header(elf);
-
-   if (opts->display_string_table) {
-      printf("shstrtab:\n");
-      elf_print_strtab(elf->shstrtab);
-      printf("strtab:\n");
-      elf_print_strtab(elf->strtab);
-   }
-
-   if (opts->display_sections)
-      elf_print_sections(elf);
-
-   if (opts->display_file_info)
-      elf_print_file_info(elf->info);
-
    if (opts->filename_out) {
       write_elf(elf, opts->filename_out, opts->plain);
 #if 1
@@ -89,6 +73,22 @@ int main(int argc, char **argv) {
       }
 #endif
    }
+
+   if (opts->display_header)
+      elf_print_header(elf);
+
+   if (opts->display_string_table) {
+      printf("shstrtab:\n");
+      elf_print_strtab(elf->shstrtab);
+      printf("strtab:\n");
+      elf_print_strtab(get_section_by_name(elf, ".strtab")->data);
+   }
+
+   if (opts->display_sections)
+      elf_print_sections(elf);
+
+   if (opts->display_file_info)
+      elf_print_file_info(&elf->info);
 
    free_elf(elf);
    free(opts);

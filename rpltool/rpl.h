@@ -121,10 +121,8 @@
    ENUM_VAL(FIF_, RPX, 1u << 1) \
    ENUM_VAL(FIF_, TLS, 1u << 3)
 
-
 #undef ENUM_VAL
 #define ENUM_VAL(prefix, name, val) prefix##name = val,
-
 typedef enum { SECTION_TYPE_LIST } SectionType;
 typedef enum { SECTION_FLAGS_LIST } SectionFlags;
 typedef enum { ELF_CLASS_LIST } ElfClass;
@@ -132,9 +130,9 @@ typedef enum { ELF_DATAENCODING_LIST } ElfDataEncoding;
 typedef enum { ELF_VERSION_LIST } ElfVersion;
 typedef enum { ELF_RELOCATION_LIST } ElfRelocation;
 typedef enum { FILE_INFO_FLAGS_LIST } FileInfoFlags;
+
 #undef ENUM_VAL
 #define ENUM_VAL GET_ENUM_NAME
-
 EMIT_ENUM_TO_STR_FUNC(SectionType, SECTION_TYPE_LIST)
 EMIT_ENUM_TO_STR_FUNC(ElfClass, ELF_CLASS_LIST)
 EMIT_ENUM_TO_STR_FUNC(ElfDataEncoding, ELF_DATAENCODING_LIST)
@@ -143,7 +141,6 @@ EMIT_ENUM_TO_STR_FUNC(ElfRelocation, ELF_RELOCATION_LIST)
 
 #undef ENUM_VAL
 #define ENUM_VAL GET_FLAG_NAME
-
 EMIT_FLAGS_TO_STR_FUNC(SectionFlags, SECTION_FLAGS_LIST)
 EMIT_FLAGS_TO_STR_FUNC(FileInfoFlags, FILE_INFO_FLAGS_LIST)
 
@@ -161,21 +158,16 @@ typedef struct {
    s16 val;
 } s16_be;
 
-#define FI_IS_RPL 0
-#define FI_IS_RPX 2
-
 typedef struct FileInfo {
    u16 magic;
    u16 version;
-   struct {
-      u32 Text;
-      u32 TextAlign;
-      u32 Data;
-      u32 DataAlign;
-      u32 LoaderInfo;
-      u32 LoaderInfoAlign;
-      u32 Temp;
-   } RegBytes;
+   u32 TextSize;
+   u32 TextAlign;
+   u32 DataSize;
+   u32 DataAlign;
+   u32 LoaderSize;
+   u32 LoaderAlign;
+   u32 TempSize;
    u32 TrampAdj;
    u32 SDABase;
    u32 SDA2Base;
@@ -207,7 +199,7 @@ typedef struct SectionHeader {
    u32 size;
    u32 link;
    u32 info;
-   u32 addralign;
+   u32 align;
    u32 entsize;
 } SectionHeader;
 
@@ -238,8 +230,6 @@ typedef struct ElfHeader {
    u16 shstrndx;
 } ElfHeader;
 
-/* Symbol table entry.  */
-
 typedef struct {
    u32 name;
    u32 value;
@@ -267,16 +257,14 @@ typedef struct Section {
    struct Section *link;
    struct Section *link2;
    const char *name;
-   void *data;
+   u8 *data;
 } Section;
 
 typedef struct {
    ElfHeader header;
-   FileInfo *info;
+   FileInfo info;
    Section *sections;
    const char *shstrtab;
-   const char *strtab;
-   u32_be *crcs;
    bool is_rpl;
 } Elf;
 

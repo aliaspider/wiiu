@@ -10,28 +10,6 @@
 #include "common.h"
 #include "rpl.h"
 
-u32 get_region_size(Elf *elf, u32 min_addr, u32 max_addr) {
-   u32 size = 0;
-   Section *s = elf->sections;
-   while (s = s->next) {
-      if (s->header.addr >= min_addr && (s->header.addr + s->header.size) < max_addr)
-         if (size < s->header.addr + s->header.size - min_addr)
-            size = s->header.addr + s->header.size - min_addr;
-   }
-   return size;
-}
-
-u32 get_region_align(Elf *elf, u32 min_addr, u32 max_addr) {
-   u32 align = 1;
-   Section *s = elf->sections;
-   while (s = s->next) {
-      if (s->header.addr >= min_addr && (s->header.addr + s->header.size) < max_addr)
-         if (align < s->header.addralign)
-            align = s->header.addralign;
-   }
-   return align;
-}
-
 void free_elf(Elf *elf) {
    Section *section = elf->sections;
    while (section = section->next)
@@ -40,37 +18,41 @@ void free_elf(Elf *elf) {
    free(elf);
 }
 
-void read_section(FILE *fp, Section *section) {
-   if (!section->header.offset || !section->header.size) {
-      section->header.offset = 0;
+void read_section(FILE *fp, Section *sec) {
+   if (sec->data)
+      return;
+
+   if (!sec->header.offset || !sec->header.size || sec->header.type == SHT_NOBITS) {
+      sec->header.offset = 0;
       return;
    }
 
-   section->data = malloc(section->header.size * (section->header.type == SHT_RELA ? 2 : 1));
-   fseek(fp, section->header.offset, SEEK_SET);
-   fread(section->data, section->header.size, 1, fp);
+   sec->data = malloc(sec->header.size * (sec->header.type == SHT_RELA ? 2 : 1));
+   fseek(fp, sec->header.offset, SEEK_SET);
+   fread(sec->data, sec->header.size, 1, fp);
 
-   if (section->header.flags & SHF_RPL_ZLIB) {
-      CompressedData *cmpr = section->data;
+   if (sec->header.flags & SHF_RPL_ZLIB) {
+      sec->header.flags &= ~SHF_RPL_ZLIB;
+      CompressedData *cmpr = (CompressedData *)sec->data;
       assert(cmpr->deflated_size);
-      void *data_out = malloc(cmpr->deflated_size * (section->header.type == SHT_RELA ? 2 : 1));
+      void *data_out = malloc(cmpr->deflated_size * (sec->header.type == SHT_RELA ? 2 : 1));
 
-      z_stream s = {};
-      s.next_in = cmpr->compressed_data;
-      s.avail_in = section->header.size - 4;
-      s.next_out = data_out;
-      s.avail_out = cmpr->deflated_size;
+      z_stream zs = {};
+      zs.next_in = cmpr->compressed_data;
+      zs.avail_in = sec->header.size - 4;
+      zs.next_out = data_out;
+      zs.avail_out = cmpr->deflated_size;
 
-      inflateInit(&s);
-      inflate(&s, Z_FINISH);
-      inflateEnd(&s);
-      assert(!s.avail_in);
-      assert(!s.avail_out);
+      inflateInit(&zs);
+      inflate(&zs, Z_FINISH);
+      inflateEnd(&zs);
+      assert(!zs.avail_in);
+      assert(!zs.avail_out);
 
-      section->header.size = cmpr->deflated_size;
+      sec->header.size = cmpr->deflated_size;
 
-      free(section->data);
-      section->data = data_out;
+      free(sec->data);
+      sec->data = data_out;
    }
 }
 
@@ -80,130 +62,230 @@ Elf *read_elf(const char *filename) {
    fread(elf, sizeof(elf->header), 1, fp);
    elf->is_rpl = elf->header.os_abi[0] == 0xCA && elf->header.os_abi[1] == 0xFE;
 
+   elf->info.magic = 0xCAFE;
+   elf->info.version = 0x0402u;
+   elf->info.SizeCoreStacks = 0x10000u;
+   elf->info.SysHeapBytes = 0x8000u;
+   elf->info.minVersion = 0x5078u;
+   elf->info.compressionLevel = 6;
+
    elf->sections = calloc(elf->header.shnum + 2, sizeof(*elf->sections));
 
    assert(elf->header.shentsize == sizeof(elf->sections->header));
    for (int i = 0; i < elf->header.shnum; i++) {
+      Section *sec = elf->sections + i;
       fseek(fp, elf->header.shoff + i * elf->header.shentsize, SEEK_SET);
-      fread(&elf->sections[i], 1, elf->header.shentsize, fp);
+      fread(sec, 1, elf->header.shentsize, fp);
    }
 
    read_section(fp, &elf->sections[elf->header.shstrndx]);
    elf->shstrtab = elf->sections[elf->header.shstrndx].data;
-   for (int i = 0; i < elf->header.shnum + 2; i++) {
-      elf->sections[i].name = elf->shstrtab + elf->sections[i].header.name;
-   }
 
-   for (int i = 0; i < elf->header.shnum - 1; i++) {
-      elf->sections[i].next = &elf->sections[i + 1];
-      elf->sections[i].next->prev = &elf->sections[i];
-   }
-
-   Section *sec = elf->sections;
-   while (sec = sec->next) {
-      if (sec->header.link)
-         sec->link = get_section(elf, sec->header.link);
-      if (sec->header.type == SHT_RELA)
-         sec->link2 = get_section(elf, sec->header.info);
-   }
-
+   Symbol *got = NULL;
    Section *relas = NULL;
-   Section *last_rela = NULL;
-   u32 loader_max_addr = 0;
-   bool has_tls = false;
-   sec = elf->sections;
-   while (sec = sec->next) {
-      if (!memcmp(sec->name, ".debug", 6) || !memcmp(sec->name, ".rela.debug", 11) ||
-          !memcmp(sec->name, ".rela.fimport", 12) || !memcmp(sec->name, ".rela.dimport", 12)) {
-         sec->prev->next = sec->next;
-         if (sec->next)
-            sec->next->prev = sec->prev;
-         sec->prev = NULL;
-         continue;
-      }
 
-      if (!sec->data)
+   Section *last_data = NULL;
+
+   for (int i = 0; i < elf->header.shnum; i++) {
+      Section *sec = elf->sections + i;
+
+      sec->name = elf->shstrtab + sec->header.name;
+      if (sec->header.link)
+         sec->link = elf->sections + sec->header.link;
+
+      switch (sec->header.type) {
+      case SHT_PROGBITS:
+      case SHT_NOBITS:
+         if (!sec->header.addr)
+            continue;
+
          read_section(fp, sec);
+         last_data = sec;
 
-      if (sec->header.addr > 0xC0000000 && loader_max_addr < align_up(sec->header.addr + sec->header.size, 64))
-         loader_max_addr = align_up(sec->header.addr + sec->header.size, 64);
-
-      if (sec->header.addr >= 0x10000000 && sec->header.addr < 0xC0000000) {
-         if (elf->is_rpl)
-            assert(sec->header.flags & SHF_WRITE);
-         else {
+         if (sec->header.addr >= 0x10000000 && sec->header.addr < 0xC0000000) {
             sec->header.flags |= SHF_WRITE;
             sec->header.flags &= ~SHF_CODE;
          }
-      }
-
-      if (sec->header.flags & SHF_TLS) {
-         sec->header.flags &= ~SHF_TLS;
-         sec->header.flags |= SHF_RPL_TLS;
-         has_tls = true;
-      }
-
-      switch (sec->header.type) {
-      case SHT_RPL_FILEINFO: elf->info = sec->data; break;
-      case SHT_RPL_CRCS: elf->crcs = sec->data; break;
-      case SHT_RELA: {
-         sec->header.flags = 0;
-         sec->prev->next = sec->next;
-         if (sec->next)
-            sec->next->prev = sec->prev;
-         if (last_rela) {
-            last_rela->next = sec;
-            sec->prev = last_rela;
-            last_rela = sec;
+         if (sec->header.flags & SHF_CODE) {
+            assert(sec->header.addr >= 0x02000000);
+            if (elf->info.TextSize < sec->header.addr + sec->header.size - 0x02000000)
+               elf->info.TextSize = sec->header.addr + sec->header.size - 0x02000000;
+            if (elf->info.TextAlign < sec->header.align)
+               elf->info.TextAlign = sec->header.align;
          } else {
-            last_rela = relas = sec;
-            last_rela->prev = NULL;
+            if (elf->info.DataSize < sec->header.addr + sec->header.size - 0x10000000) {
+               assert(sec->header.addr >= 0x10000000);
+               elf->info.DataSize = sec->header.addr + sec->header.size - 0x10000000;
+            }
+            if (elf->info.DataAlign < sec->header.align)
+               elf->info.DataAlign = sec->header.align;
          }
+
+         if (sec->header.flags & SHF_TLS) {
+            sec->header.flags &= ~SHF_TLS;
+            sec->header.flags |= SHF_RPL_TLS;
+            elf->info.Flags |= FIF_TLS;
+            if ((1 << elf->info.tlsAlignShift) < sec->header.align)
+               elf->info.tlsAlignShift = log2(sec->header.align);
+         }
+
          break;
+      case SHT_RELA: {
+         Section *symtab = elf->sections + sec->header.link;
+         Section *target = elf->sections + sec->header.info;
+         Section *strtab = elf->sections + symtab->header.link;
+
+         sec->link2 = target;
+         if (!target->header.addr || target->header.type == SHT_RPL_IMPORTS)
+            continue;
+
+         sec->header.flags &= ~SHF_INFO_LINK;
+
+         if (!relas)
+            relas = sec;
+         else {
+            Section *rela = relas;
+            while (rela->next)
+               rela = rela->next;
+            rela->next = sec;
+            sec->prev = rela;
+         }
+         read_section(fp, sec);
+         read_section(fp, symtab);
+         read_section(fp, strtab);
+         read_section(fp, target);
+
+         assert(sizeof(Relocation) == sec->header.entsize);
+         assert(!(sec->header.size % sizeof(Relocation)));
+         for (int i = 0; i < sec->header.size / sizeof(Relocation); i++) {
+            Relocation *rel = (Relocation *)sec->data + i;
+            switch (rel->type) {
+            case R_PPC_NONE:
+            case R_PPC_ADDR32:
+            case R_PPC_ADDR16_LO:
+            case R_PPC_ADDR16_HI:
+            case R_PPC_ADDR16_HA:
+            case R_PPC_REL24:
+            case R_PPC_REL14:
+            case R_PPC_DTPMOD32:
+            case R_PPC_DTPREL32:
+            case R_PPC_EMB_SDA21:
+            case R_PPC_EMB_RELSDA:
+            case R_PPC_DIAB_SDA21_LO:
+            case R_PPC_DIAB_SDA21_HI:
+            case R_PPC_DIAB_SDA21_HA:
+            case R_PPC_DIAB_RELSDA_LO:
+            case R_PPC_DIAB_RELSDA_HI:
+            case R_PPC_DIAB_RELSDA_HA:
+            case R_PPC_GHS_REL16_HA:
+            case R_PPC_GHS_REL16_HI:
+            case R_PPC_GHS_REL16_LO: break;
+
+            case R_PPC_REL32: {
+               Relocation *new_rel = (Relocation *)((u8 *)sec->data + sec->header.size);
+               sec->header.size += sizeof(Relocation);
+               rel->type = R_PPC_GHS_REL16_HI;
+               new_rel->type = R_PPC_GHS_REL16_LO;
+               new_rel->index = rel->index;
+               new_rel->offset = rel->offset + 2;
+               new_rel->addend = rel->addend + 2;
+               break;
+            }
+
+            case R_PPC_TLSGD:
+            case R_PPC_GOT_TLSGD16: {
+               if (!got) {
+                  for (int i = 0; i < symtab->header.size / sizeof(Symbol); i++) {
+                     Symbol *sym = (Symbol *)symtab->data + i;
+                     if (!strcmp(strtab->data + sym->name, "_GLOBAL_OFFSET_TABLE_")) {
+                        got = sym;
+                        break;
+                     }
+                  }
+               }
+               assert(got && got->shndx == sec->header.info);
+
+               s16_be *tls_index_offset = (s16_be *)(target->data + rel->offset - target->header.addr);
+               if (rel->type == R_PPC_GOT_TLSGD16) {
+                  rel->type = R_PPC_DTPMOD32;
+                  rel->offset = got->value + tls_index_offset->val;
+                  //                  u32_be *moduleIndex = (u32_be *)(target->data + rel->offset -
+                  //                  target->header.addr); moduleIndex->val = elf->info.tlsModuleIndex; /* not needed
+                  //                  */
+               } else {
+                  tls_index_offset--;
+                  rel->type = R_PPC_DTPREL32;
+                  rel->offset = got->value + tls_index_offset->val + 4;
+                  //                  u32_be *symValue = (u32_be *)(target->data + rel->offset - target->header.addr);
+                  //                  symValue->val = ((Symbol *)symtab->data + rel->index)->value; /* not needed */
+               }
+               break;
+            }
+
+            default:
+               fprintf(stderr, "unsupported relocation #%i(%s)\n", rel->type, ElfRelocation_to_str(rel->type));
+               exit(1);
+            }
+         }
+
+         elf->info.TempSize += align_up(sec->header.size, 32);
+         continue;
       }
       case SHT_STRTAB:
       case SHT_SYMTAB:
-         if (elf->is_rpl)
-            assert(sec->header.addr);
-         else {
-            assert(sec->header.addralign);
-            sec->header.addr = align_up(loader_max_addr, sec->header.addralign);
-            loader_max_addr = sec->header.addr + sec->header.size;
+         read_section(fp, sec);
+         if (!sec->header.addr) {
+            assert(sec->header.align);
             sec->header.flags |= SHF_ALLOC;
+            sec->header.addr = align_up(elf->info.LoaderSize + 0xC0000000, sec->header.align);
+            elf->info.LoaderSize = sec->header.addr + sec->header.size - 0xC0000000;
+            if (elf->info.LoaderAlign < sec->header.align)
+               elf->info.LoaderAlign = sec->header.align;
          }
          break;
+      case SHT_RPL_IMPORTS:
+      case SHT_RPL_EXPORTS:
+         read_section(fp, sec);
+         if (elf->info.LoaderSize < align_up(sec->header.addr + sec->header.size - 0xC0000000, 0x40))
+            elf->info.LoaderSize = align_up(sec->header.addr + sec->header.size - 0xC0000000, 0x40);
+         if (elf->info.LoaderAlign < sec->header.align)
+            elf->info.LoaderAlign = sec->header.align;
+         break;
+      case SHT_RPL_CRCS:
+      case SHT_RPL_FILEINFO: read_section(fp, sec); break;
       default: break;
+      }
+      //      read_section(fp, sec);
+
+      if (i > 0) {
+         Section *last = elf->sections;
+         while (last->next)
+            last = last->next;
+         last->next = sec;
+         sec->prev = last;
       }
    }
    fclose(fp);
 
-   elf->strtab = get_section_by_name(elf, ".strtab")->data;
+      elf->info.TextSize *= 2;
+      elf->info.LoaderSize *= 2;
+      elf->info.DataSize *= 2;
+      elf->info.TempSize *= 2;
 
    if (!relas) {
       assert(!elf->is_rpl);
-      printf("Relocations missing, recompile with -Wl,--emit-relocs\n");
+      fprintf(stderr, "Relocations missing, recompile with -Wl,--emit-relocs\n");
       exit(1);
    }
 
-   Section *last_data = NULL;
-   Section *first_import = NULL;
+   Section *sec = relas;
+   while (sec->next)
+      sec = sec->next;
+   sec->next = last_data->next;
+   sec->next->prev = sec;
 
-   sec = elf->sections;
-   while (sec = sec->next) {
-      if (sec->header.addr >= 0x2000000 && sec->header.addr < 0xC0000000) {
-         last_data = sec;
-      } else if (sec->header.type == SHT_RPL_IMPORTS && !first_import) {
-         first_import = sec;
-      }
-   }
-   if (!first_import)
-      first_import = last_data->next;
-
-   last_data->next = relas;
    relas->prev = last_data;
-
-   first_import->prev = last_rela;
-   last_rela->next = first_import;
+   last_data->next = relas;
 
    sec = elf->sections;
    while (sec = sec->next) {
@@ -212,174 +294,29 @@ Elf *read_elf(const char *filename) {
       if (sec->link2)
          sec->header.info = get_sid(sec->link2);
    }
-   int section_lut[elf->header.shnum];
+
+   int new_ids[elf->header.shnum];
    for (int i = 0; i < elf->header.shnum; i++)
-      section_lut[i] = get_sid(elf->sections + i);
-
-   Section *symtab = get_section_by_name(elf, ".symtab");
-   for (int i = 0; i < (symtab->header.size / symtab->header.entsize); i++) {
-      Symbol *sym = (Symbol *)symtab->data + i;
-      if (sym->shndx < elf->header.shnum)
-         sym->shndx = section_lut[sym->shndx];
-   }
-
-   if (elf->is_rpl) {
-      assert(elf->crcs);
-      assert(elf->info);
-      return elf;
-   }
+      new_ids[i] = get_sid(elf->sections + i);
 
    sec = elf->sections;
    while (sec = sec->next) {
-      if (sec->header.type != SHT_RELA)
+      if (sec->header.type != SHT_SYMTAB)
          continue;
 
-      assert(sizeof(Relocation) == sec->header.entsize);
-      for (int i = 0; i < sec->header.size / sizeof(Relocation); i++) {
-         Relocation *rel = (Relocation *)sec->data + i;
-         switch (rel->type) {
-         case R_PPC_NONE:
-         case R_PPC_ADDR32:
-         case R_PPC_ADDR16_LO:
-         case R_PPC_ADDR16_HI:
-         case R_PPC_ADDR16_HA:
-         case R_PPC_REL24:
-         case R_PPC_REL14:
-         case R_PPC_DTPMOD32:
-         case R_PPC_DTPREL32:
-         case R_PPC_EMB_SDA21:
-         case R_PPC_EMB_RELSDA:
-         case R_PPC_DIAB_SDA21_LO:
-         case R_PPC_DIAB_SDA21_HI:
-         case R_PPC_DIAB_SDA21_HA:
-         case R_PPC_DIAB_RELSDA_LO:
-         case R_PPC_DIAB_RELSDA_HI:
-         case R_PPC_DIAB_RELSDA_HA:
-         case R_PPC_GHS_REL16_HI:
-         case R_PPC_GHS_REL16_LO: break;
-         case R_PPC_REL32: {
-            Relocation *new_rel = (Relocation *)((u8 *)sec->data + sec->header.size);
-            sec->header.size += sizeof(Relocation);
-            *new_rel = *rel;
-            rel->type = R_PPC_GHS_REL16_HI;
-            new_rel->type = R_PPC_GHS_REL16_LO;
-            new_rel->offset += 2;
-            new_rel->addend += 2;
-            break;
-         }
-         case R_PPC_TLSGD:
-         case R_PPC_GOT_TLSGD16: {
-            Section *text = get_section(elf, sec->header.info);
-            assert(!strcmp(text->name, ".text"));
-            u32 got_addr = 0;
-            for (int i = 0; i < symtab->header.size / sizeof(Symbol); i++) {
-               Symbol *sym = (Symbol *)symtab->data + i;
-               if (!strcmp(elf->strtab + sym->name, "_GLOBAL_OFFSET_TABLE_")) {
-                  got_addr = sym->value;
-                  assert(sym->shndx == get_sid(text));
-                  break;
-               }
-            }
-            assert(got_addr);
-
-            s16_be *got_offset = (s16_be *)((u8 *)text->data + rel->offset - text->header.addr);
-            if (rel->type == R_PPC_GOT_TLSGD16) {
-               rel->type = R_PPC_DTPMOD32;
-               rel->offset = got_addr + got_offset->val;
-               // *(u32_be *)((u8 *)text->data + rel->offset - text->header.addr)->val = info->tlsModuleIndex;
-            } else {
-               got_offset--;
-               rel->type = R_PPC_DTPREL32;
-               rel->offset = got_addr + got_offset->val + 4;
-               // *(u32_be *)((u8 *)text->data + rel->offset - text->header.addr)->val = symtab[rel.index].value;
-            }
-            break;
-         }
-         case R_PPC_TLS:
-         case R_PPC_TPREL16:
-         case R_PPC_TPREL16_LO:
-         case R_PPC_TPREL16_HI:
-         case R_PPC_TPREL16_HA:
-         case R_PPC_TPREL32:
-         case R_PPC_DTPREL16:
-         case R_PPC_DTPREL16_LO:
-         case R_PPC_DTPREL16_HI:
-         case R_PPC_DTPREL16_HA:
-         case R_PPC_GOT_TLSGD16_LO:
-         case R_PPC_GOT_TLSGD16_HI:
-         case R_PPC_GOT_TLSGD16_HA:
-         case R_PPC_GOT_TLSLD16:
-         case R_PPC_GOT_TLSLD16_LO:
-         case R_PPC_GOT_TLSLD16_HI:
-         case R_PPC_GOT_TLSLD16_HA:
-         case R_PPC_GOT_TPREL16:
-         case R_PPC_GOT_TPREL16_LO:
-         case R_PPC_GOT_TPREL16_HI:
-         case R_PPC_GOT_TPREL16_HA:
-         case R_PPC_GOT_DTPREL16:
-         case R_PPC_GOT_DTPREL16_LO:
-         case R_PPC_GOT_DTPREL16_HI:
-         case R_PPC_GOT_DTPREL16_HA:
-         case R_PPC_TLSLD:
-            printf("unsupported TLS relocation: %s\n"
-                   " - define '__thread' as '__thread __attribute((tls_model(\"global-dynamic\")))'\n"
-                   " - recompile with '-ftls-model=global-dynamic'\n"
-                   " - link with '-Wl,--no-tls-optimize'\n",
-                   ElfRelocation_to_str(rel->type));
-            exit(1);
-            break;
-         default: printf("unsupported relocation: %s\n", ElfRelocation_to_str(rel->type)); exit(1);
-         }
+      assert(sec->header.entsize == sizeof(Symbol));
+      for (int i = 0; i < (sec->header.size / sizeof(Symbol)); i++) {
+         Symbol *sym = (Symbol *)sec->data + i;
+         if (sym->shndx < elf->header.shnum)
+            sym->shndx = new_ids[sym->shndx];
       }
    }
 
-   fflush(stdout);
-
-   Section *crcs = elf->sections + elf->header.shnum++;
-   Section *file_info = elf->sections + elf->header.shnum++;
-
-   Section *last = get_section(elf, get_section_count(elf) - 1);
-   last->next = crcs;
-   last->next->prev = last;
-   crcs->next = file_info;
-   crcs->next->prev = crcs;
-
-   crcs->header.type = SHT_RPL_CRCS;
-   crcs->header.addralign = 4;
-   crcs->header.entsize = 4;
-   crcs->header.size = get_section_count(elf) * crcs->header.entsize;
-   crcs->data = calloc(1, crcs->header.size);
-   elf->crcs = crcs->data;
-
-   file_info->header.type = SHT_RPL_FILEINFO;
-   file_info->header.addralign = 4;
-   file_info->header.size = sizeof(FileInfo);
-   file_info->data = calloc(1, file_info->header.size);
-   elf->info = file_info->data;
-
-   elf->info->magic = 0xCAFE;
-   elf->info->version = 0x0402u;
-   elf->info->SizeCoreStacks = 0x10000u;
-   elf->info->SysHeapBytes = 0x8000u;
-   elf->info->minVersion = 0x5078u;
-   elf->info->compressionLevel = 6;
-
-   Section *text = get_section_by_name(elf, ".text");
-   elf->info->RegBytes.Text = align_up(text->header.size, 16);
-   elf->info->RegBytes.TextAlign = text->header.addralign;
-
-   elf->info->RegBytes.Data = get_region_size(elf, 0x10000000, 0xC0000000);
-   elf->info->RegBytes.DataAlign = get_region_align(elf, 0x10000000, 0xC0000000);
-
-   elf->info->RegBytes.LoaderInfo = get_region_size(elf, 0xC0000000, 0xE0000000);
-   elf->info->RegBytes.LoaderInfoAlign = get_region_align(elf, 0xC0000000, 0xE0000000);
-
-   sec = elf->sections;
-   while (sec = sec->next) {
-      if (sec->header.type == SHT_RELA)
-         elf->info->RegBytes.Temp += align_up(sec->header.size, 32);
+   if (elf->is_rpl) {
+      return elf;
    }
-   elf->info->RegBytes.Temp = align_up(elf->info->RegBytes.Temp, 0x1000);
+
+   fflush(stdout);
 
    int SDAStart = 0;
    int SDA2Start = 0;
@@ -389,83 +326,101 @@ Elf *read_elf(const char *filename) {
 
    if (true || sdata || sdata2 || sbss) // || __rpx_entry || main && !__rpl_entry
    {
-      elf->info->Flags |= FIF_RPX;
-      SDAStart = sdata ? sdata->header.addr : sbss ? sbss->header.addr : (0x10000000 + elf->info->RegBytes.Data);
+      elf->info.Flags |= FIF_RPX;
+      SDAStart = sdata ? sdata->header.addr : sbss ? sbss->header.addr : (0x10000000 + elf->info.DataSize);
       SDA2Start = sdata2 ? sdata2->header.addr : 0x10000000;
    }
 
-   elf->info->SDABase = SDAStart + 0x8000;
-   elf->info->SDA2Base = SDA2Start + 0x8000;
+   elf->info.SDABase = SDAStart + 0x8000;
+   elf->info.SDA2Base = SDA2Start + 0x8000;
 
-   int tlsAlign = 0;
-   if (has_tls) {
-      elf->info->Flags |= FIF_TLS;
-      tlsAlign = 1;
-      sec = elf->sections;
-      while (sec = sec->next)
-         if ((sec->header.flags & SHF_RPL_TLS) && (tlsAlign < sec->header.addralign))
-            tlsAlign = sec->header.addralign;
-   }
-   elf->info->tlsAlignShift = log2(tlsAlign);
+   Section *crcs = elf->sections + elf->header.shnum++;
+   Section *info_section = elf->sections + elf->header.shnum++;
+
+   Section *last = elf->sections;
+   while (last->next)
+      last = last->next;
+
+   last->next = crcs;
+   last->next->prev = last;
+   crcs->next = info_section;
+   crcs->next->prev = crcs;
+
+   info_section->header.type = SHT_RPL_FILEINFO;
+   info_section->header.align = 4;
+   info_section->header.size = sizeof(FileInfo);
+   info_section->data = calloc(1, info_section->header.size);
+   memcpy(info_section->data, &elf->info, sizeof(FileInfo));
+   info_section->name = "";
+
+   crcs->header.type = SHT_RPL_CRCS;
+   crcs->header.align = 4;
+   crcs->header.entsize = 4;
+   crcs->header.size = get_section_count(elf) * crcs->header.entsize;
+   crcs->data = calloc(1, crcs->header.size);
+   crcs->name = "";
 
    sec = elf->sections;
+   u32_be *crc = (u32_be *)crcs->data + 1;
    while (sec = sec->next)
-      if (sec->header.type != SHT_RPL_CRCS)
-         elf->crcs[get_sid(sec)].val = crc32(0, sec->data, sec->header.size);
+      (crc++)->val = (sec->header.type == SHT_RPL_CRCS) ? 0 : crc32(0, sec->data, sec->header.size);
 
+   printf("crcs updated !\n");
    return elf;
 }
 
-int add_sections(Elf *elf, int pos, SectionType type, SectionFlags required_flags) {
-   Section *section = elf->sections;
+void write_sections(FILE *fp, Section *sec, SectionType type, SectionFlags required_flags) {
    assert(type != SHT_NOBITS);
-   while (section = section->next) {
-      if (section->header.type == type && ((section->header.flags & required_flags) == required_flags)) {
-         assert(!section->header.offset);
-         if (section->header.size) {
-            section->header.offset = pos;
-            pos += section->header.size;
-            pos = align_up(pos, 0x40);
-         }
+   while (sec = sec->next) {
+      if (sec->header.type == type && ((sec->header.flags & required_flags) == required_flags)) {
+         assert(!sec->header.offset);
+         if (!sec->header.size)
+            continue;
+         sec->header.offset = ftell(fp);
+         fwrite(sec->data, 1, sec->header.size, fp);
+         while (ftell(fp) & 0x3F)
+            fputc('\0', fp);
       }
    }
-   return pos;
 }
 
 void write_elf(Elf *elf, const char *filename, bool plain) {
-   Section *section = elf->sections;
-   while (section = section->next) {
-      section->header.offset = 0;
-      if (!section->data)
+   Section *sec = elf->sections;
+   while (sec = sec->next) {
+      sec->header.offset = 0;
+      if (!sec->data) {
+         assert(!(sec->header.flags & SHF_RPL_ZLIB));
          continue;
+      }
 
-      bool compressed = !plain && section->header.size > 0x18;
-      compressed = compressed && section->header.type != SHT_RPL_FILEINFO;
-      compressed = compressed && section->header.type != SHT_RPL_CRCS;
+      bool compressed = !plain && sec->header.size > 0x18;
+      compressed = compressed && sec->header.type != SHT_RPL_FILEINFO;
+      compressed = compressed && sec->header.type != SHT_RPL_CRCS;
+      compressed = compressed && sec != &elf->sections[elf->header.shstrndx];
 
       if (compressed) {
-         section->header.flags |= SHF_RPL_ZLIB;
-         CompressedData *data_out = malloc(section->header.size + 4);
-         data_out->deflated_size = section->header.size;
+         sec->header.flags |= SHF_RPL_ZLIB;
+         CompressedData *data_out = malloc(sec->header.size + 4);
+         data_out->deflated_size = sec->header.size;
 
          z_stream s = { 0 };
-         s.next_in = section->data;
-         s.avail_in = section->header.size;
+         s.next_in = sec->data;
+         s.avail_in = sec->header.size;
          s.next_out = data_out->compressed_data;
-         s.avail_out = section->header.size;
+         s.avail_out = sec->header.size;
 
-         deflateInit(&s, elf->info->compressionLevel);
+         deflateInit(&s, elf->info.compressionLevel);
          deflate(&s, Z_FINISH);
          deflateEnd(&s);
          assert(!s.avail_in);
          assert(s.avail_out);
 
-         section->header.size = (u8 *)s.next_out - (u8 *)data_out;
+         sec->header.size = (u8 *)s.next_out - (u8 *)data_out;
 
-         free(section->data);
-         section->data = data_out;
+         free(sec->data);
+         sec->data = (u8 *)data_out;
       } else
-         section->header.flags &= ~SHF_RPL_ZLIB;
+         assert(!(sec->header.flags & SHF_RPL_ZLIB));
    }
 
    ElfHeader header = {};
@@ -492,33 +447,22 @@ void write_elf(Elf *elf, const char *filename, bool plain) {
    FILE *fp = fopen(filename, "wb");
    fwrite(elf, sizeof(elf->header), 1, fp);
 
-   int pos = elf->header.shoff + elf->header.shnum * elf->header.shentsize;
-   pos = add_sections(elf, pos, SHT_RPL_CRCS, 0);
-   pos = add_sections(elf, pos, SHT_RPL_FILEINFO, 0);
-   pos = add_sections(elf, pos, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
-   pos = add_sections(elf, pos, SHT_RPL_EXPORTS, SHF_ALLOC);
-   pos = add_sections(elf, pos, SHT_RPL_IMPORTS, SHF_ALLOC);
-   pos = add_sections(elf, pos, SHT_SYMTAB, SHF_ALLOC);
-   pos = add_sections(elf, pos, SHT_STRTAB, SHF_ALLOC);
-   pos = add_sections(elf, pos, SHT_PROGBITS, SHF_ALLOC | SHF_CODE);
-   pos = add_sections(elf, pos, SHT_RELA, 0);
+   fseek(fp, elf->header.shoff + elf->header.shnum * elf->header.shentsize, SEEK_SET);
+   write_sections(fp, elf->sections, SHT_RPL_CRCS, 0);
+   write_sections(fp, elf->sections, SHT_RPL_FILEINFO, 0);
+   write_sections(fp, elf->sections, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
+   write_sections(fp, elf->sections, SHT_RPL_EXPORTS, SHF_ALLOC);
+   write_sections(fp, elf->sections, SHT_RPL_IMPORTS, SHF_ALLOC);
+   write_sections(fp, elf->sections, SHT_SYMTAB, SHF_ALLOC);
+   write_sections(fp, elf->sections, SHT_STRTAB, SHF_ALLOC);
+   write_sections(fp, elf->sections, SHT_PROGBITS, SHF_ALLOC | SHF_CODE);
+   write_sections(fp, elf->sections, SHT_RELA, 0);
 
    fseek(fp, elf->header.shoff, SEEK_SET);
-   section = elf->sections;
+   sec = elf->sections;
    do
-      fwrite(section, elf->header.shentsize, 1, fp);
-   while (section = section->next);
-
-   section = elf->sections;
-   while (section = section->next) {
-      if (section->header.offset) {
-         fseek(fp, section->header.offset, SEEK_SET);
-         fwrite(section->data, 1, section->header.size, fp);
-         int extra = (section->header.offset + section->header.size) & 0x1F;
-         while (extra++ & 0xF)
-            fputc('\0', fp);
-      }
-   }
+      fwrite(sec, elf->header.shentsize, 1, fp);
+   while (sec = sec->next);
 
    fclose(fp);
    printf("output written to %s\n", filename);

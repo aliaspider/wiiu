@@ -29,36 +29,41 @@ void elf_print_header(Elf *elf) {
 }
 
 void elf_print_sections(Elf *elf) {
-   bool compressed = false;
    Section *section = elf->sections;
-   while (section = section->next)
-      if (section->header.flags & SHF_RPL_ZLIB)
-         compressed = true;
 
    table_format_t elf_sections_table[] = {
       { TABLE_ENTRY_ID, "id" },
       { TABLE_ENTRY_CSTR, "name" },
       { TABLE_ENTRY_CSTR, "type" },
       { TABLE_ENTRY_CSTR, "flags" },
-      { TABLE_ENTRY_HEX_ZERO_PAD, "addr" },
-      { TABLE_ENTRY_HEX_ZERO_PAD, "offset" },
-      { TABLE_ENTRY_HEX_ZERO_PAD, "size" },
+      { TABLE_ENTRY_HEX_ZERO_PAD, "laddr" },
+      { TABLE_ENTRY_HEX_ZERO_PAD, "lsize" },
+      { TABLE_ENTRY_HEX_ZERO_PAD, "foffset" },
+      { TABLE_ENTRY_HEX_ZERO_PAD, "fsize" },
       { TABLE_ENTRY_INT, "link" },
       { TABLE_ENTRY_HEX_ZERO_PAD, "info" },
       { TABLE_ENTRY_INT, "align" },
-      { TABLE_ENTRY_INT, "entry" },
+      { TABLE_ENTRY_INT, "esize" },
+      { TABLE_ENTRY_HEX_ZERO_PAD, "crc" },
       { TABLE_ENTRY_INVALID, NULL },
 
    };
    table_t *table = table_create(elf_sections_table);
+   u32_be* crcs = (u32_be*)get_section(elf, get_section_count(elf) - 2)->data;
 
    section = elf->sections;
    while (section = section->next) {
-      compressed = (section->header.flags & SHF_RPL_ZLIB);
+      int load = section->header.size;
+      int fsize = section->header.size;
+      if (section->header.flags & SHF_RPL_ZLIB && section->data)
+         load = ((CompressedData *)section->data)->deflated_size;
+      if (section->header.type == SHT_NOBITS)
+         fsize = 0;
+
       table_add_row(table, get_sid(section), section->name, SectionType_to_str(section->header.type),
-                    SectionFlags_to_str(section->header.flags, ", "), section->header.addr, section->header.offset,
-                    section->header.size, section->header.link, section->header.info,
-                    (unsigned)log2(section->header.addralign), section->header.entsize);
+                    SectionFlags_to_str(section->header.flags, ", "), section->header.addr, load,
+                    section->header.offset, fsize, section->header.link, section->header.info,
+                    (unsigned)log2(section->header.align), section->header.entsize, crcs[get_sid(section)]);
    }
 
    printf("\n");
@@ -83,13 +88,13 @@ void elf_print_strtab(const char *strtab) {
 void elf_print_file_info(FileInfo *info) {
    log_var(info->magic);
    log_var(info->version);
-   log_var(info->RegBytes.Text);
-   log_var(info->RegBytes.TextAlign);
-   log_var(info->RegBytes.Data);
-   log_var(info->RegBytes.DataAlign);
-   log_var(info->RegBytes.LoaderInfo);
-   log_var(info->RegBytes.LoaderInfoAlign);
-   log_var(info->RegBytes.Temp);
+   log_var(info->TextSize);
+   log_var(info->TextAlign);
+   log_var(info->DataSize);
+   log_var(info->DataAlign);
+   log_var(info->LoaderSize);
+   log_var(info->LoaderAlign);
+   log_var(info->TempSize);
    log_var(info->TrampAdj);
    log_var(info->SDABase);
    log_var(info->SDA2Base);
