@@ -94,6 +94,7 @@ Elf *read_elf(const char *filename) {
          sec->link = elf->sections + sec->header.link;
 
       switch (sec->header.type) {
+      case SHT_NULL: continue;
       case SHT_PROGBITS:
       case SHT_NOBITS:
          if (!sec->header.addr)
@@ -253,24 +254,24 @@ Elf *read_elf(const char *filename) {
          break;
       case SHT_RPL_CRCS:
       case SHT_RPL_FILEINFO: read_section(fp, sec); break;
-      default: break;
+      default:
+         printf("Unknown section : %s (%s)", sec->name, SectionType_to_str(sec->header.type));
+         read_section(fp, sec);
+         break;
       }
-      //      read_section(fp, sec);
 
-      if (i > 0) {
-         Section *last = elf->sections;
-         while (last->next)
-            last = last->next;
-         last->next = sec;
-         sec->prev = last;
-      }
+      Section *last = elf->sections;
+      while (last->next)
+         last = last->next;
+      last->next = sec;
+      sec->prev = last;
    }
    fclose(fp);
 
-      elf->info.TextSize *= 2;
-      elf->info.LoaderSize *= 2;
-      elf->info.DataSize *= 2;
-      elf->info.TempSize *= 2;
+// elf->info.TextSize *= 2;
+// elf->info.LoaderSize *= 2;
+// elf->info.DataSize *= 2;
+   elf->info.TempSize *= 2;
 
    if (!relas) {
       assert(!elf->is_rpl);
@@ -365,7 +366,6 @@ Elf *read_elf(const char *filename) {
    while (sec = sec->next)
       (crc++)->val = (sec->header.type == SHT_RPL_CRCS) ? 0 : crc32(0, sec->data, sec->header.size);
 
-   printf("crcs updated !\n");
    return elf;
 }
 

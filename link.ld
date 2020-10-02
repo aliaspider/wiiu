@@ -9,15 +9,23 @@ MEMORY {
 
 ENTRY(__rpx_start)
 
+PHDRS {
+   hdr_text    PT_LOAD  FLAGS(0x01 | 0x04);
+   hdr_data    PT_LOAD  FLAGS(0x02 | 0x04);
+   hdr_sdata   PT_LOAD  FLAGS(0x02 | 0x04);
+   hdr_tdata   PT_LOAD  FLAGS(0x02 | 0x04);
+   hdr_load    PT_LOAD  FLAGS(0x01 | 0x04);
+}
+
 SECTIONS
 {
    . = ORIGIN(code);
-   .syscall ALIGN(32) : {
-      __code_start = .;
+   __code_start = .;
+   .syscall : {
       *(.syscall .syscall.*)
-   } > code
+   } > code : hdr_text
 
-   .text ALIGN(32) : {
+   .text : {
       *(.text)
       *(.text.*)
       *(.gnu.warning)
@@ -28,19 +36,18 @@ SECTIONS
       *(.got.plt)
       *(.plt)
       . = ALIGN(4);
-      __code_end = .;
    } > code
+   __code_end = .;
 
    . = ORIGIN(data);
-   .sdata2 ALIGN(32): {
-      PROVIDE(__sdata2_start = .);
+   __SDATA2_START__ = .;
+   .sdata2 : {
       *(.sdata2)
       *(.sdata2.*)
       *(.gnu.linkonce.s2.*)
-      PROVIDE(__sdata2_end = .);
-   } > data
+   } > data : hdr_data
 
-   .rodata ALIGN(256): {
+   .rodata : {
       *(.rodata)
       *(.rodata.*)
       *(.gnu.linkonce.r.*)
@@ -55,7 +62,7 @@ SECTIONS
       *(.tm_clone_table)
    } > data
 
-   .data ALIGN(64): {
+   .data : {
       *(.data)
       *(.data.*)
       *(.gnu.linkonce.d.*)
@@ -73,41 +80,36 @@ SECTIONS
       PROVIDE(__DTOR_END__ = .);
    } > data
 
-   PROVIDE(__bss_start = .);
-   .bss ALIGN(256) (NOLOAD) : {
+   .bss (NOLOAD) : {
       *(.dynbss)
       *(.bss)
       *(.bss.*)
       *(.gnu.linkonce.b.*)
       *(COMMON)
    } > data
-   PROVIDE(__bss_end = .);
 
-   .sdata ALIGN(32): {
-      PROVIDE(__sdata_start = .);
+   __SDATA_START__ = .;
+   .sdata : {
       *(.sdata)
       *(.sdata.*)
       *(.gnu.linkonce.s.*)
-      PROVIDE(__sdata_end = .);
-   } > data
+   } > data : hdr_sdata
 
-   .sbss ALIGN(64) (NOLOAD) : {
-      PROVIDE(__sbss_start = .);
+   .sbss (NOLOAD) : {
       *(.dynsbss)
       *(.sbss)
       *(.sbss.*)
       *(.gnu.linkonce.sb.*)
       *(.scommon)
-      PROVIDE(__sbss_end = .);
    } > data
 
-   .thrdata ALIGN(32) : {
+   .thrdata : {
       *(.tdata)
       *(.tdata.*)
       *(.gnu.linkonce.td.*)
-   } > data
+   } > data : hdr_tdata
 
-   .thrbss ALIGN(32) : {
+   .thrbss (NOLOAD) : {
       *(.tbss)
       *(.tbss.*)
       *(.gnu.linkonce.tb.*)
@@ -115,7 +117,7 @@ SECTIONS
    } > data
 
    . = ORIGIN(load);
-   .fexports ALIGN(32) : { KEEP( *(.fexports) ) } > load
+   .fexports ALIGN(32) : { KEEP( *(.fexports) ) } > load : hdr_load
    .dexports ALIGN(32) : { KEEP( *(.dexports) ) } > load
 
    INCLUDE "imports.ld"

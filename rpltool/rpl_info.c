@@ -29,7 +29,7 @@ void elf_print_header(Elf *elf) {
 }
 
 void elf_print_sections(Elf *elf) {
-   Section *section = elf->sections;
+   Section *sec = elf->sections;
 
    table_format_t elf_sections_table[] = {
       { TABLE_ENTRY_ID, "id" },
@@ -40,10 +40,10 @@ void elf_print_sections(Elf *elf) {
       { TABLE_ENTRY_HEX_ZERO_PAD, "lsize" },
       { TABLE_ENTRY_HEX_ZERO_PAD, "foffset" },
       { TABLE_ENTRY_HEX_ZERO_PAD, "fsize" },
-      { TABLE_ENTRY_INT, "link" },
+      { TABLE_ENTRY_INT, "ln" },
       { TABLE_ENTRY_HEX_ZERO_PAD, "info" },
-      { TABLE_ENTRY_INT, "align" },
-      { TABLE_ENTRY_INT, "esize" },
+      { TABLE_ENTRY_INT, "al" },
+      { TABLE_ENTRY_INT, "es" },
       { TABLE_ENTRY_HEX_ZERO_PAD, "crc" },
       { TABLE_ENTRY_INVALID, NULL },
 
@@ -51,19 +51,19 @@ void elf_print_sections(Elf *elf) {
    table_t *table = table_create(elf_sections_table);
    u32_be* crcs = (u32_be*)get_section(elf, get_section_count(elf) - 2)->data;
 
-   section = elf->sections;
-   while (section = section->next) {
-      int load = section->header.size;
-      int fsize = section->header.size;
-      if (section->header.flags & SHF_RPL_ZLIB && section->data)
-         load = ((CompressedData *)section->data)->deflated_size;
-      if (section->header.type == SHT_NOBITS)
+   sec = elf->sections;
+   while (sec = sec->next) {
+      int load = sec->header.size;
+      int fsize = sec->header.size;
+      if (sec->header.flags & SHF_RPL_ZLIB && sec->data)
+         load = ((CompressedData *)sec->data)->deflated_size;
+      if (sec->header.type == SHT_NOBITS)
          fsize = 0;
 
-      table_add_row(table, get_sid(section), section->name, SectionType_to_str(section->header.type),
-                    SectionFlags_to_str(section->header.flags, ", "), section->header.addr, load,
-                    section->header.offset, fsize, section->header.link, section->header.info,
-                    (unsigned)log2(section->header.align), section->header.entsize, crcs[get_sid(section)]);
+      table_add_row(table, get_sid(sec), sec->name, SectionType_to_str(sec->header.type),
+                    SectionFlags_to_str(sec->header.flags, ", "), sec->header.addr, load,
+                    sec->header.offset, fsize, sec->header.link, sec->header.info,
+                    (unsigned)log2(sec->header.align), sec->header.entsize, crcs[get_sid(sec)]);
    }
 
    printf("\n");
