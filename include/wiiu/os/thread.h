@@ -1,6 +1,7 @@
 #pragma once
 #include <wiiu/types.h>
 #include "time.h"
+#include "wiiu/os/exception.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,42 +64,6 @@ enum OS_THREAD_ATTRIB
 };
 typedef uint8_t OSThreadAttributes;
 
-#define OS_CONTEXT_TAG 0x4F53436F6E747874ull
-
-typedef struct OSContext
-{
-   /*! Should always be set to the value OS_CONTEXT_TAG. */
-   uint64_t tag;
-
-   uint32_t gpr[32];
-   uint32_t cr;
-   uint32_t lr;
-   uint32_t ctr;
-   uint32_t xer;
-   uint32_t srr0;
-   uint32_t srr1;
-   uint32_t exception_specific0;
-   uint32_t exception_specific1;
-   uint32_t crash_exception_type;
-   uint32_t __unknown[0x2];
-   uint32_t fpscr;
-   double fpr[32];
-   uint16_t spinLockCount;
-   uint16_t state;
-   uint32_t gqr[8];
-   uint32_t __unknown0;
-   double psf[32];
-   uint64_t coretime[3];
-   uint64_t starttime;
-   uint32_t error;
-   uint32_t __unknown1;
-   uint32_t pmc1;
-   uint32_t pmc2;
-   uint32_t pmc3;
-   uint32_t pmc4;
-   uint32_t mmcr0;
-   uint32_t mmcr1;
-} OSContext;
 
 typedef struct OSMutex OSMutex;
 typedef struct OSFastMutex OSFastMutex;
@@ -139,7 +104,6 @@ typedef struct
 } OSThreadSimpleQueue;
 
 #define OS_THREAD_TAG 0x74487244u
-#pragma pack(push, 1)
 typedef struct OSThread
 {
    OSContext context;
@@ -233,9 +197,23 @@ typedef struct OSThread
    /*! Queue of threads waiting for a thread to be suspended. */
    OSThreadQueue suspendQueue;
 
-   uint32_t unknown4[0x2B];
+   int32_t unknown4[0xF];
+   OSExceptionCallbackFn dsiExCallback[3];
+   OSExceptionCallbackFn isiExCallback[3];
+   OSExceptionCallbackFn programExCallback[3];
+   OSExceptionCallbackFn perfMonExCallback[3];
+   int32_t unknown5;
+   short tlsCnt;
+   short unknown6;
+   struct
+   {
+       void* address;
+       int32_t tlsUnk;
+   }* tls;
+   int32_t unknown7 [0x5];
+   OSExceptionCallbackFn alignExCallback[3];
+   int32_t unknown8[0x5];
 } OSThread;
-#pragma pack(pop)
 
 void
 OSCancelThread(OSThread *thread);

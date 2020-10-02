@@ -53,6 +53,9 @@ typedef struct _framerec
 #define dsisr exception_specific0
 #define dar exception_specific1
 
+__attribute__((weak)) const char *PROGRAM_NAME;
+__attribute__((weak)) const char *PROGRAM_VERSION;
+
 /*	Some bitmasks for determining DSI causes.
 	Taken from the PowerPC Programming Environments Manual (32-bit).
 */
@@ -288,9 +291,11 @@ BOOL exception_cb(OSContext* ctx, OSExceptionType type, OSExceptionCallbackFn pr
       buf_add("Stack pointer invalid. Could not trace further.\n");
 
    buf_add("MEM: 0x%08X/0x%08X/0x%08X\n", MEM1_avail(), MEM2_avail(), MEMBucket_avail());
-   extern const char *PROGRAM_NAME;
-   extern const char *PROGRAM_VERSION;
-   buf_add("%s (%s)\n", PROGRAM_NAME, PROGRAM_VERSION);
+
+   if(PROGRAM_NAME && PROGRAM_VERSION)
+      buf_add("%s (%s)\n", PROGRAM_NAME, PROGRAM_VERSION);
+   else if (PROGRAM_NAME)
+      buf_add("%s\n", PROGRAM_NAME);
 
    for (; i < VISIBLE_STACK_TRACE_LINES + 3; i++)
       buf_add("\n");

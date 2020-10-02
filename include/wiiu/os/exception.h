@@ -1,5 +1,6 @@
 #pragma once
 #include <wiiu/types.h>
+#include "context.h"
 
 #ifdef __cplusplus
 extern "C" {

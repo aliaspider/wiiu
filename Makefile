@@ -49,7 +49,7 @@ OBJ := $(OBJ:.cc=.o)
 OBJ := $(addprefix $(BUILD_DIR)/,$(OBJ))
 
 
-DEFINES += -D__wiiu__ -DHW_WUP -D__powerpc__ -DWORDS_BIGENDIAN -DFD_SETSIZE=32 
+DEFINES += -D__wiiu__ -DHW_WUP -D__powerpc__ -DFD_SETSIZE=32 
 
 INCDIRS += -isystem$(WIIU_DIR) -Iinclude
 
@@ -133,7 +133,7 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJ) $(BUILD_DIR)/imports.ld .$(TARGET).last
 	@touch .$(TARGET).last
 	$(Q)$(LD) $(OBJ) $(LDFLAGS) $(LIBDIRS) $(LIBS) -o $@
 
-$(TARGET).rpx: $(TARGET).elf $(RPLTOOL) 
+$(TARGET).rpx: $(TARGET).elf $(RPLTOOL)
 	@$(if $(Q), echo rpltool $@,)
 	$(RPLTOOL) $(TARGET).elf -S -p -o $@
 
