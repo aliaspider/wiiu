@@ -93,6 +93,9 @@ Elf *read_elf(const char *filename) {
       if (sec->header.link)
          sec->link = elf->sections + sec->header.link;
 
+      if (!sec->header.size)
+         continue;
+
       switch (sec->header.type) {
       case SHT_NULL: continue;
       case SHT_PROGBITS:
@@ -170,6 +173,10 @@ Elf *read_elf(const char *filename) {
             case R_PPC_REL14:
             case R_PPC_DTPMOD32:
             case R_PPC_DTPREL32:
+            case R_PPC_GHS_REL16_HA:
+            case R_PPC_GHS_REL16_HI:
+            case R_PPC_GHS_REL16_LO: break;
+
             case R_PPC_EMB_SDA21:
             case R_PPC_EMB_RELSDA:
             case R_PPC_DIAB_SDA21_LO:
@@ -177,10 +184,7 @@ Elf *read_elf(const char *filename) {
             case R_PPC_DIAB_SDA21_HA:
             case R_PPC_DIAB_RELSDA_LO:
             case R_PPC_DIAB_RELSDA_HI:
-            case R_PPC_DIAB_RELSDA_HA:
-            case R_PPC_GHS_REL16_HA:
-            case R_PPC_GHS_REL16_HI:
-            case R_PPC_GHS_REL16_LO: break;
+            case R_PPC_DIAB_RELSDA_HA: elf->info.Flags |= FIF_RPX; break;
 
             case R_PPC_REL32: {
                Relocation *new_rel = (Relocation *)((u8 *)sec->data + sec->header.size);
@@ -210,21 +214,17 @@ Elf *read_elf(const char *filename) {
                if (rel->type == R_PPC_GOT_TLSGD16) {
                   rel->type = R_PPC_DTPMOD32;
                   rel->offset = got->value + tls_index_offset->val;
-                  //                  u32_be *moduleIndex = (u32_be *)(target->data + rel->offset -
-                  //                  target->header.addr); moduleIndex->val = elf->info.tlsModuleIndex; /* not needed
-                  //                  */
                } else {
                   tls_index_offset--;
                   rel->type = R_PPC_DTPREL32;
                   rel->offset = got->value + tls_index_offset->val + 4;
-                  //                  u32_be *symValue = (u32_be *)(target->data + rel->offset - target->header.addr);
-                  //                  symValue->val = ((Symbol *)symtab->data + rel->index)->value; /* not needed */
                }
                break;
             }
 
             default:
-               fprintf(stderr, "unsupported relocation #%i(%s)\n", rel->type, ElfRelocation_to_str(rel->type));
+               fprintf(stderr, "Unsupported Relocation #%i(R_%s) for Symbol '%s'\n", rel->type,
+                       ElfRelocation_to_str(rel->type), strtab->data + ((Symbol *)symtab->data + rel->index)->name);
                exit(1);
             }
          }
@@ -268,11 +268,6 @@ Elf *read_elf(const char *filename) {
    }
    fclose(fp);
 
-// elf->info.TextSize *= 2;
-// elf->info.LoaderSize *= 2;
-// elf->info.DataSize *= 2;
-   elf->info.TempSize *= 2;
-
    if (!relas) {
       assert(!elf->is_rpl);
       fprintf(stderr, "Relocations missing, recompile with -Wl,--emit-relocs\n");
@@ -300,6 +295,9 @@ Elf *read_elf(const char *filename) {
    for (int i = 0; i < elf->header.shnum; i++)
       new_ids[i] = get_sid(elf->sections + i);
 
+   u32 SDAStart = 0;
+   u32 SDA2Start = 0;
+
    sec = elf->sections;
    while (sec = sec->next) {
       if (sec->header.type != SHT_SYMTAB)
@@ -310,6 +308,12 @@ Elf *read_elf(const char *filename) {
          Symbol *sym = (Symbol *)sec->data + i;
          if (sym->shndx < elf->header.shnum)
             sym->shndx = new_ids[sym->shndx];
+         if (!SDAStart && !strcmp(sec->link->data + sym->name, "__SDATA_START__"))
+            SDAStart = sym->value;
+         else if (!SDA2Start && !strcmp(sec->link->data + sym->name, "__SDATA2_START__"))
+            SDA2Start = sym->value;
+         else if ((sym->value == elf->header.entry) && !strcmp(sec->link->data + sym->name, "__rpx_start"))
+            elf->info.Flags |= FIF_RPX;
       }
    }
 
@@ -317,23 +321,25 @@ Elf *read_elf(const char *filename) {
       return elf;
    }
 
-   fflush(stdout);
+   if (!SDAStart || !SDA2Start && (elf->info.Flags & FIF_RPX)) {
+      Section *sdata = get_section_by_name(elf, ".sdata");
+      Section *sdata2 = get_section_by_name(elf, ".sdata2");
+      Section *sbss = get_section_by_name(elf, ".sbss");
 
-   int SDAStart = 0;
-   int SDA2Start = 0;
-   Section *sdata = get_section_by_name(elf, ".sdata");
-   Section *sdata2 = get_section_by_name(elf, ".sdata2");
-   Section *sbss = get_section_by_name(elf, ".sbss");
-
-   if (true || sdata || sdata2 || sbss) // || __rpx_entry || main && !__rpl_entry
-   {
-      elf->info.Flags |= FIF_RPX;
       SDAStart = sdata ? sdata->header.addr : sbss ? sbss->header.addr : (0x10000000 + elf->info.DataSize);
       SDA2Start = sdata2 ? sdata2->header.addr : 0x10000000;
    }
 
+   if (SDAStart || SDA2Start)
+      assert(elf->info.Flags & FIF_RPX);
+
    elf->info.SDABase = SDAStart + 0x8000;
    elf->info.SDA2Base = SDA2Start + 0x8000;
+
+   // elf->info.TextSize *= 2;
+   // elf->info.LoaderSize *= 2;
+   // elf->info.DataSize *= 2;
+   elf->info.TempSize *= 2;
 
    Section *crcs = elf->sections + elf->header.shnum++;
    Section *info_section = elf->sections + elf->header.shnum++;
