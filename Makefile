@@ -49,7 +49,7 @@ OBJ := $(OBJ:.cc=.o)
 OBJ := $(addprefix $(BUILD_DIR)/,$(OBJ))
 
 
-DEFINES += -D__wiiu__ -D__powerpc__ -DFD_SETSIZE=32 
+DEFINES += -D__wiiu__ -D__powerpc__ -DFD_SETSIZE=32 -D_POSIX_THREADS
 
 INCDIRS += -isystem$(WIIU_DIR) -Iinclude
 

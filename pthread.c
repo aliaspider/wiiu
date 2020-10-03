@@ -1,4 +1,3 @@
-#define _POSIX_THREADS 1
 
 #include <errno.h>
 #include <stdlib.h>
@@ -11,6 +10,15 @@
 #include <wiiu/os/mutex.h>
 #include <wiiu/os/condition.h>
 #include <wiiu/os/atomic.h>
+
+pthread_t pthread_self (void)
+{
+   return (pthread_t)OSGetCurrentThread();
+}
+
+int pthread_setname_np (pthread_t target_thread, const char *name) {
+   OSSetThreadName((OSThread*)target_thread, name);
+}
 
 int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr) {
    OSInitMutex((OSMutex *)(*mutex = (pthread_mutex_t)calloc(1, sizeof(OSMutex))));
@@ -98,7 +106,7 @@ int pthread_create(pthread_t *pthread, const pthread_attr_t *pthread_attr, void 
       stack_addr = (u8 *)memalign(8, stack_size) + stack_size;
 
    OSThreadAttributes attr = OS_THREAD_ATTRIB_AFFINITY_ANY;
-   //   attr = OS_THREAD_ATTRIB_AFFINITY_CPU0 | OS_THREAD_ATTRIB_AFFINITY_CPU2;
+      attr = OS_THREAD_ATTRIB_AFFINITY_CPU0 | OS_THREAD_ATTRIB_AFFINITY_CPU2;
    if (pthread_attr && pthread_attr->detachstate)
       attr |= OS_THREAD_ATTRIB_DETACHED;
 

@@ -59,6 +59,9 @@ extern "C" {
 #define SO_SUCCESS      0
 #define SO_EWOULDBLOCK  6
 
+#define SHUT_RD         0
+#define SHUT_WR         1
+#define SHUT_RDWR       2
 
 typedef uint32_t socklen_t;
 typedef uint16_t sa_family_t;
